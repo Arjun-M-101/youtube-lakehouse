@@ -1,0 +1,13 @@
+aws_region                  = "ap-south-1"
+environment                 = "dev"
+project_name               = "youtube-lakehouse"
+redshift_admin_username    = "lakehouse_admin"
+alert_email                = "your-real-email@example.com"
+quicksight_user_arn        = "arn:aws:quicksight:ap-south-1:<account-id>:user/default/<user-name>"
+min_dq_pass_rate            = 0.95
+pipeline_schedule_expression = "cron(0 6 * * ? *)"
+glue_worker_count           = 2
+
+# Do NOT put this value in this file.
+# Set it before Terraform init/apply:
+# export TF_VAR_redshift_admin_password='A-Strong-Password-Here'

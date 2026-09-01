@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: fct_category_daily_performance
+    description: "Business-ready daily category performance per region, ranked by views — what dashboards read from"
+    columns:
+      - name: category_id
+        tests:
+          - not_null
+
+      - name: trending_date
+        tests:
+          - not_null
+
+      - name: region
+        tests:
+          - not_null
+
+      - name: views_rank_in_day
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - category_id
+              - trending_date
+              - region

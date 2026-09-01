@@ -1,0 +1,162 @@
+[
+  {
+    "category_id": "1",
+    "category_title": "Film & Animation",
+    "assignable": true
+  },
+  {
+    "category_id": "2",
+    "category_title": "Autos & Vehicles",
+    "assignable": true
+  },
+  {
+    "category_id": "10",
+    "category_title": "Music",
+    "assignable": true
+  },
+  {
+    "category_id": "15",
+    "category_title": "Pets & Animals",
+    "assignable": true
+  },
+  {
+    "category_id": "17",
+    "category_title": "Sports",
+    "assignable": true
+  },
+  {
+    "category_id": "18",
+    "category_title": "Short Movies",
+    "assignable": true
+  },
+  {
+    "category_id": "19",
+    "category_title": "Travel & Events",
+    "assignable": true
+  },
+  {
+    "category_id": "20",
+    "category_title": "Gaming",
+    "assignable": true
+  },
+  {
+    "category_id": "21",
+    "category_title": "Videoblogging",
+    "assignable": true
+  },
+  {
+    "category_id": "22",
+    "category_title": "People & Blogs",
+    "assignable": true
+  },
+  {
+    "category_id": "23",
+    "category_title": "Comedy",
+    "assignable": true
+  },
+  {
+    "category_id": "24",
+    "category_title": "Entertainment",
+    "assignable": true
+  },
+  {
+    "category_id": "25",
+    "category_title": "News & Politics",
+    "assignable": true
+  },
+  {
+    "category_id": "26",
+    "category_title": "Howto & Style",
+    "assignable": true
+  },
+  {
+    "category_id": "27",
+    "category_title": "Education",
+    "assignable": true
+  },
+  {
+    "category_id": "28",
+    "category_title": "Science & Technology",
+    "assignable": true
+  },
+  {
+    "category_id": "29",
+    "category_title": "Nonprofits & Activism",
+    "assignable": true
+  },
+  {
+    "category_id": "30",
+    "category_title": "Movies",
+    "assignable": true
+  },
+  {
+    "category_id": "31",
+    "category_title": "Anime/Animation",
+    "assignable": true
+  },
+  {
+    "category_id": "32",
+    "category_title": "Action/Adventure",
+    "assignable": true
+  },
+  {
+    "category_id": "33",
+    "category_title": "Classics",
+    "assignable": true
+  },
+  {
+    "category_id": "34",
+    "category_title": "Comedy",
+    "assignable": true
+  },
+  {
+    "category_id": "35",
+    "category_title": "Documentary",
+    "assignable": true
+  },
+  {
+    "category_id": "36",
+    "category_title": "Drama",
+    "assignable": true
+  },
+  {
+    "category_id": "37",
+    "category_title": "Family",
+    "assignable": true
+  },
+  {
+    "category_id": "38",
+    "category_title": "Foreign",
+    "assignable": true
+  },
+  {
+    "category_id": "39",
+    "category_title": "Horror",
+    "assignable": true
+  },
+  {
+    "category_id": "40",
+    "category_title": "Sci-Fi/Fantasy",
+    "assignable": true
+  },
+  {
+    "category_id": "41",
+    "category_title": "Thriller",
+    "assignable": true
+  },
+  {
+    "category_id": "42",
+    "category_title": "Shorts",
+    "assignable": true
+  },
+  {
+    "category_id": "43",
+    "category_title": "Shows",
+    "assignable": true
+  },
+  {
+    "category_id": "44",
+    "category_title": "Trailers",
+    "assignable": true
+  }
+]

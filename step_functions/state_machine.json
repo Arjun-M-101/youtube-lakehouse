@@ -1,0 +1,164 @@
+{
+  "Comment": "Production-shaped YouTube Lakehouse batch orchestration: Glue Bronze->Silver, DQ gate, Silver crawler, Glue Silver->Gold, SNS failure path.",
+  "StartAt": "BronzeToSilver",
+  "States": {
+    "BronzeToSilver": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${bronze_to_silver_job_name}",
+        "Arguments": {
+          "--BRONZE_FILE.$": "$.triggeredKey",
+          "--DQ_REPORT_KEY.$": "States.Format('dq-reports/bronze-to-silver/{}.json', $$.Execution.Name)",
+          "--RUN_ID.$": "$$.Execution.Name"
+        }
+      },
+      "ResultPath": "$.glueResult",
+      "Retry": [
+  {
+    "ErrorEquals": ["Glue.AWSGlueException", "Glue.ConcurrentRunsExceededException", "States.TaskFailed"],
+    "IntervalSeconds": 30,
+    "MaxAttempts": 3,
+    "BackoffRate": 2.0
+  }
+],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyPipelineFailure"
+        }
+      ],
+      "Next": "ReadDataQualityReport"
+    },
+    "ReadDataQualityReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+      "Parameters": {
+        "Bucket.$": "$.bucket",
+        "Key.$": "States.Format('dq-reports/bronze-to-silver/{}.json', $$.Execution.Name)"
+      },
+      "ResultSelector": {
+        "report.$": "States.StringToJson($.Body)"
+      },
+      "ResultPath": "$.dq",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyPipelineFailure"
+        }
+      ],
+      "Next": "DataQualityGate"
+    },
+    "DataQualityGate": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dq.report.pass",
+          "BooleanEquals": true,
+          "Next": "StartSilverCrawler"
+        }
+      ],
+      "Default": "NotifyDataQualityFailure"
+    },
+    "StartSilverCrawler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Parameters": {
+        "Name": "${silver_crawler_name}"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["Glue.CrawlerRunningException"],
+          "Next": "WaitForCrawler"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyPipelineFailure"
+        }
+      ],
+      "Next": "WaitForCrawler"
+    },
+    "WaitForCrawler": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "GetCrawler"
+    },
+    "GetCrawler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+      "Parameters": {
+        "Name": "${silver_crawler_name}"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyPipelineFailure"
+        }
+      ],
+      "Next": "CrawlerReady"
+    },
+    "CrawlerReady": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Crawler.State",
+          "StringEquals": "READY",
+          "Next": "SilverToGold"
+        }
+      ],
+      "Default": "WaitForCrawler"
+    },
+    "SilverToGold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${silver_to_gold_job_name}",
+        "Arguments": {
+          "--RUN_ID.$": "$$.Execution.Name"
+        }
+      },
+      "Retry": [
+  {
+    "ErrorEquals": ["Glue.AWSGlueException", "Glue.ConcurrentRunsExceededException", "States.TaskFailed"],
+    "IntervalSeconds": 30,
+    "MaxAttempts": 3,
+    "BackoffRate": 2.0
+  }
+],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyPipelineFailure"
+        }
+      ],
+      "Next": "PipelineSucceeded"
+    },
+    "PipelineSucceeded": {
+      "Type": "Succeed"
+    },
+    "NotifyDataQualityFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "YouTube Lakehouse data quality gate failed",
+        "Message.$": "States.Format('Execution {} stopped: Bronze->Silver pass rate was below the configured threshold. Review the DQ report in S3.', $$.Execution.Name)"
+      },
+      "Next": "PipelineFailed"
+    },
+    "NotifyPipelineFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "YouTube Lakehouse pipeline failed",
+        "Message.$": "States.Format('Execution {} failed during orchestration. Check Step Functions and Glue/CloudWatch logs.', $$.Execution.Name)"
+      },
+      "Next": "PipelineFailed"
+    },
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Cause": "YouTube Lakehouse batch pipeline failed or was blocked by the data quality gate."
+    }
+  }
+}

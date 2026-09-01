@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: gold
+    description: "Gold-layer tables loaded into Redshift Serverless by the silver_to_gold Glue job"
+    schema: gold
+    tables:
+      - name: category_daily_summary
+        description: "One row per (category_id, trending_date, region) — the output of build_category_daily_summary() in transform_logic.py"
+        columns:
+          - name: category_id
+            tests:
+              - not_null
+          - name: trending_date
+            tests:
+              - not_null
+          - name: region
+            description: "2-letter country code, resolved from the Bronze source filename (e.g. USvideos.csv -> US)"
+            tests:
+              - not_null
+          - name: video_count
+            tests:
+              - not_null

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-tests:
+    name: Unit tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run pytest
+        run: pytest tests/ -v
+
+  terraform-check:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform/
+      - name: terraform init
+        run: terraform init -backend=false
+        working-directory: terraform
+      - name: terraform validate
+        run: terraform validate
+        working-directory: terraform
+
+  dbt-check:
+    name: dbt parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dbt
+        run: python -m pip install -r requirements-dbt.txt
+      - name: dbt deps
+        run: dbt deps
+        working-directory: dbt_project
+      - name: dbt parse
+        run: dbt parse --profiles-dir .
+        working-directory: dbt_project
+        env:
+          REDSHIFT_HOST: localhost
+          REDSHIFT_USER: ci
+          REDSHIFT_PASSWORD: ci
+
+  terraform-plan-on-main:
+    name: Terraform plan on main
+    needs: [python-tests, terraform-check, dbt-check]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+      - name: terraform init
+        run: terraform init
+        working-directory: terraform
+      - name: terraform plan
+        run: terraform plan -no-color
+        working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+          TF_VAR_quicksight_user_arn: ${{ secrets.QUICKSIGHT_USER_ARN }}
+          TF_VAR_redshift_admin_password: ${{ secrets.REDSHIFT_ADMIN_PASSWORD }}

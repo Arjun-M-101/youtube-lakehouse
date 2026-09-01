@@ -1,0 +1,2 @@
+dbt-core>=1.9,<2.0
+dbt-redshift>=1.9,<2.0

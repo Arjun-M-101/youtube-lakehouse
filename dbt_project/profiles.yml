@@ -1,0 +1,22 @@
+# This file is safe to commit — it contains no hardcoded credentials, only
+# env_var() references. dbt looks for profiles.yml in ~/.dbt/ by default;
+# we instead point it at this project directory with --profiles-dir .
+# (both the CI workflow and the README commands below do this), so every
+# real value comes from environment variables at run time, never from disk.
+# Requires: pip install dbt-redshift
+
+youtube_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST') }}"        # from terraform output redshift_workgroup_endpoint
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      port: 5439
+      dbname: youtube_lakehouse
+      schema: marts
+      threads: 2
+      # Redshift Serverless — no cluster identifier needed, connect via
+      # the workgroup endpoint directly.
+      sslmode: require
