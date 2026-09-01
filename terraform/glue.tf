@@ -115,27 +115,27 @@ resource "aws_glue_job" "bronze_to_silver" {
   }
 
   default_arguments = {
-    "--job-language"                    = "python"
-    "--extra-py-files"                  = join(",", [
+    "--job-language" = "python"
+    "--extra-py-files" = join(",", [
       "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.transform_logic_module.key}",
       "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.category_enrichment_module.key}",
       "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.api_client_module.key}",
     ])
-    "--BRONZE_PATH"                    = "s3://${aws_s3_bucket.lakehouse.bucket}/"
-    "--SILVER_PATH"                    = "s3://${aws_s3_bucket.lakehouse.bucket}/silver/youtube/"
-    "--QUARANTINE_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/quarantine/youtube/"
-    "--DQ_REPORT_PATH"                 = "s3://${aws_s3_bucket.lakehouse.bucket}/dq-reports/bronze-to-silver/"
-    "--CATEGORY_REF_PATH"              = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
-    "--YOUTUBE_API_KEY_SECRET_NAME"    = aws_secretsmanager_secret.youtube_api_key.name
-    "--BRONZE_FILE"                    = ""
-    "--DQ_REPORT_KEY"                  = ""
-    "--MIN_DQ_PASS_RATE"               = tostring(var.min_dq_pass_rate)
-    "--enable-glue-datacatalog"        = "true"
-    "--enable-metrics"                 = "true"
-    "--enable-job-insights"            = "true"
-    "--enable-observability-metrics"   = "true"
+    "--BRONZE_PATH"                      = "s3://${aws_s3_bucket.lakehouse.bucket}/"
+    "--SILVER_PATH"                      = "s3://${aws_s3_bucket.lakehouse.bucket}/silver/youtube/"
+    "--QUARANTINE_PATH"                  = "s3://${aws_s3_bucket.lakehouse.bucket}/quarantine/youtube/"
+    "--DQ_REPORT_PATH"                   = "s3://${aws_s3_bucket.lakehouse.bucket}/dq-reports/bronze-to-silver/"
+    "--CATEGORY_REF_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
+    "--YOUTUBE_API_KEY_SECRET_NAME"      = aws_secretsmanager_secret.youtube_api_key.name
+    "--BRONZE_FILE"                      = ""
+    "--DQ_REPORT_KEY"                    = ""
+    "--MIN_DQ_PASS_RATE"                 = tostring(var.min_dq_pass_rate)
+    "--enable-glue-datacatalog"          = "true"
+    "--enable-metrics"                   = "true"
+    "--enable-job-insights"              = "true"
+    "--enable-observability-metrics"     = "true"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--job-bookmark-option"            = "job-bookmark-disable"
+    "--job-bookmark-option"              = "job-bookmark-disable"
   }
 
   execution_property { max_concurrent_runs = 1 }
@@ -162,21 +162,21 @@ resource "aws_glue_job" "silver_to_gold" {
   }
 
   default_arguments = {
-    "--job-language"                  = "python"
-    "--extra-py-files"                = "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.transform_logic_module.key}"
-    "--SILVER_PATH"                  = "s3://${aws_s3_bucket.lakehouse.bucket}/silver/youtube/"
-    "--GOLD_PATH"                    = "s3://${aws_s3_bucket.lakehouse.bucket}/gold/category_daily_summary/"
-    "--REDSHIFT_CONNECTION"          = aws_glue_connection.redshift.name
-    "--REDSHIFT_TABLE"               = "gold.category_daily_summary"
-    "--REDSHIFT_STAGE_TABLE"         = "gold.category_daily_summary_stage"
-    "--REDSHIFT_TMP_DIR"             = "s3://${aws_s3_bucket.lakehouse.bucket}/redshift-tmp/"
-    "--CATEGORY_REF_PATH"            = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
-    "--enable-glue-datacatalog"      = "true"
-    "--enable-metrics"               = "true"
-    "--enable-job-insights"          = "true"
-    "--enable-observability-metrics" = "true"
+    "--job-language"                     = "python"
+    "--extra-py-files"                   = "s3://${aws_s3_bucket.lakehouse.bucket}/${aws_s3_object.transform_logic_module.key}"
+    "--SILVER_PATH"                      = "s3://${aws_s3_bucket.lakehouse.bucket}/silver/youtube/"
+    "--GOLD_PATH"                        = "s3://${aws_s3_bucket.lakehouse.bucket}/gold/category_daily_summary/"
+    "--REDSHIFT_CONNECTION"              = aws_glue_connection.redshift.name
+    "--REDSHIFT_TABLE"                   = "gold.category_daily_summary"
+    "--REDSHIFT_STAGE_TABLE"             = "gold.category_daily_summary_stage"
+    "--REDSHIFT_TMP_DIR"                 = "s3://${aws_s3_bucket.lakehouse.bucket}/redshift-tmp/"
+    "--CATEGORY_REF_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
+    "--enable-glue-datacatalog"          = "true"
+    "--enable-metrics"                   = "true"
+    "--enable-job-insights"              = "true"
+    "--enable-observability-metrics"     = "true"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--job-bookmark-option"          = "job-bookmark-disable"
+    "--job-bookmark-option"              = "job-bookmark-disable"
   }
 
   connections = [aws_glue_connection.redshift.name]

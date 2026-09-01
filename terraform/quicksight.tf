@@ -42,7 +42,7 @@ resource "aws_quicksight_vpc_connection" "lakehouse" {
   vpc_connection_id  = "${var.project_name}-vpc-connection"
   name               = "${var.project_name}-vpc-connection"
   aws_account_id     = data.aws_caller_identity.current.account_id
-  role_arn            = aws_iam_role.quicksight_vpc_role.arn
+  role_arn           = aws_iam_role.quicksight_vpc_role.arn
   security_group_ids = [aws_security_group.glue_components.id]
   subnet_ids         = [aws_subnet.lakehouse_a.id, aws_subnet.lakehouse_b.id, aws_subnet.lakehouse_c.id]
 
@@ -85,7 +85,7 @@ resource "aws_quicksight_data_source" "redshift" {
       "quicksight:DescribeDataSourcePermissions",
       "quicksight:PassDataSource",
       "quicksight:UpdateDataSource",
-    "quicksight:DeleteDataSource",
+      "quicksight:DeleteDataSource",
       "quicksight:UpdateDataSourcePermissions",
     ]
   }

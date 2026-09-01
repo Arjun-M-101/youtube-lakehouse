@@ -78,7 +78,7 @@ resource "aws_internet_gateway" "lakehouse" {
 resource "aws_route" "internet_access" {
   route_table_id         = aws_route_table.lakehouse.id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id              = aws_internet_gateway.lakehouse.id
+  gateway_id             = aws_internet_gateway.lakehouse.id
 }
 
 resource "aws_security_group" "glue_endpoints" {
@@ -110,11 +110,11 @@ resource "aws_security_group" "glue_components" {
   vpc_id      = aws_vpc.lakehouse.id
 
   ingress {
-    description     = "Glue workers communicate with each other"
-    from_port       = 0
-    to_port         = 65535
-    protocol        = "tcp"
-    self            = true
+    description = "Glue workers communicate with each other"
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "tcp"
+    self        = true
   }
 
   egress {

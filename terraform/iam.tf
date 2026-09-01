@@ -38,8 +38,8 @@ resource "aws_secretsmanager_secret_version" "redshift_credentials" {
 
 data "aws_iam_policy_document" "glue_job_policy" {
   statement {
-    sid = "LakehouseS3Objects"
-    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    sid       = "LakehouseS3Objects"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.lakehouse.arn}/*"]
   }
 
@@ -268,7 +268,7 @@ resource "aws_iam_role" "redshift_s3_role" {
 
 data "aws_iam_policy_document" "redshift_s3_policy" {
   statement {
-    actions = ["s3:ListBucket", "s3:GetBucketLocation"]
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.lakehouse.arn]
     condition {
       test     = "StringLike"
@@ -278,7 +278,7 @@ data "aws_iam_policy_document" "redshift_s3_policy" {
   }
 
   statement {
-    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.lakehouse.arn}/redshift-tmp/*"]
   }
 }

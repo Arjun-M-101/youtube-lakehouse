@@ -6,7 +6,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
     bronze_to_silver_job_name = aws_glue_job.bronze_to_silver.name
     silver_to_gold_job_name   = aws_glue_job.silver_to_gold.name
     silver_crawler_name       = aws_glue_crawler.silver_crawler.name
-    sns_topic_arn              = aws_sns_topic.pipeline_alerts.arn
+    sns_topic_arn             = aws_sns_topic.pipeline_alerts.arn
   })
 
   logging_configuration {

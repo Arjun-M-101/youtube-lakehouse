@@ -1,24 +1,24 @@
 resource "aws_redshiftserverless_namespace" "lakehouse" {
-  namespace_name     = "${var.project_name}-ns"
+  namespace_name      = "${var.project_name}-ns"
   db_name             = "youtube_lakehouse"
   admin_username      = var.redshift_admin_username
-  admin_user_password  = var.redshift_admin_password
-  iam_roles            = [aws_iam_role.redshift_s3_role.arn]
+  admin_user_password = var.redshift_admin_password
+  iam_roles           = [aws_iam_role.redshift_s3_role.arn]
 }
 
 resource "aws_redshiftserverless_workgroup" "lakehouse" {
-  workgroup_name   = "${var.project_name}-wg"
-  namespace_name   = aws_redshiftserverless_namespace.lakehouse.namespace_name
-  base_capacity    = 8
-  max_capacity     = 16
+  workgroup_name = "${var.project_name}-wg"
+  namespace_name = aws_redshiftserverless_namespace.lakehouse.namespace_name
+  base_capacity  = 8
+  max_capacity   = 16
 
   subnet_ids = [
     aws_subnet.lakehouse_a.id,
     aws_subnet.lakehouse_b.id,
     aws_subnet.lakehouse_c.id,
   ]
-  security_group_ids  = [aws_security_group.redshift_access.id]
-  publicly_accessible = false
+  security_group_ids   = [aws_security_group.redshift_access.id]
+  publicly_accessible  = false
   enhanced_vpc_routing = true
 }
 
@@ -43,7 +43,7 @@ resource "aws_redshiftdata_statement" "bootstrap_gold_table" {
   database       = aws_redshiftserverless_namespace.lakehouse.db_name
   secret_arn     = aws_secretsmanager_secret.redshift_credentials.arn
   statement_name = "${var.project_name}-bootstrap-gold-table"
-  sql = <<-SQL
+  sql            = <<-SQL
     CREATE TABLE IF NOT EXISTS gold.category_daily_summary (
       category_id INTEGER,
       category_name VARCHAR(256),
