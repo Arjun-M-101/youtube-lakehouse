@@ -2,7 +2,7 @@
 
 ## 🚀 Overview
 
-This is the AWS-native rebuild of my earlier local YouTube data engineering project (Airflow + Spark + Postgres + Streamlit — see [that repo](#) for the local version). Where the local version proved the Medallion Architecture on a single machine, this version proves the same design as real managed cloud infrastructure: event-driven ingestion, a serverless orchestrator, distributed Spark ETL on AWS Glue, an explicit data-quality gate, a private serverless warehouse, and a BI layer — all defined as code and torn down when not in use.
+This is the AWS-native rebuild of my earlier local YouTube data engineering project (Airflow + Spark + Postgres + Streamlit — see [https://github.com/Arjun-M-101/Youtube_DE_Project](#) for the local version). Where the local version proved the Medallion Architecture on a single machine, this version proves the same design as real managed cloud infrastructure: event-driven ingestion, a serverless orchestrator, distributed Spark ETL on AWS Glue, an explicit data-quality gate, a private serverless warehouse, and a BI layer — all defined as code and torn down when not in use.
 
 The first AWS account I tried this on turned out to be a dead end — Redshift and Glue were both blocked at the account level, not the IAM level (see [Production Problem #1](#-production-problems-i-hit-and-how-i-fixed-them) below). This repo is the clean rebuild on a working account.
 
