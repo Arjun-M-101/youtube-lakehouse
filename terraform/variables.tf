@@ -70,3 +70,9 @@ variable "glue_worker_count" {
     error_message = "glue_worker_count must be at least 2 for this project."
   }
 }
+
+variable "dbt_local_access_cidr" {
+  description = "CIDR allowed to reach Redshift 5439 during a guarded dbt run. Supply with TF_VAR_dbt_local_access_cidr."
+  type        = string
+  default     = "127.0.0.1/32"
+}

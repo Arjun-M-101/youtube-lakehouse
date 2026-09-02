@@ -141,19 +141,11 @@ resource "aws_security_group" "redshift_access" {
   }
 
   ingress {
-    description = "TEMP: local dbt access for Arjun laptop, remove before final delivery"
+    description = "Guarded local dbt access - CIDR supplied per run, never committed"
     from_port   = 5439
     to_port     = 5439
     protocol    = "tcp"
-    cidr_blocks = ["49.204.118.177/32"]
-  }
-
-  ingress {
-    description = "QuickSight VPC connection fallback (public path)"
-    from_port   = 5439
-    to_port     = 5439
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.dbt_local_access_cidr]
   }
 
   egress {
