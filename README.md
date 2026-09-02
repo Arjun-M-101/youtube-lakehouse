@@ -10,7 +10,7 @@ It ingests the [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/
 
 ## 🏗️ Architecture
 
-![](screenshots/AWS_Architecture_Diagram (Dark).png)
+![AWS architecture diagram](screenshots/AWS_Architecture_Diagram-Dark.png)
 
 A daily **EventBridge Scheduler** run also fires the same state machine with an empty `triggeredKey`, so Bronze → Silver reprocesses the full Bronze prefix as a backstop even if no new file lands that day.
 
