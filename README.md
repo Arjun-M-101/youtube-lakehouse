@@ -473,6 +473,8 @@ screenshots/
 ├── stepfunctions-graph-succeeded.png         # graph view of a full green run - the single most important shot
 ├── stepfunctions-execution-history.png       # shows the DataQualityGate branch decision
 ├── stepfunctions-pipeline-failed-dq-gate.png # optional - the IN failure, kept as proof of Production Problem #14
+├── dq-report-us-clean-pass.png               # DQ_REPORT JSON from CloudWatch - clean US run
+├── dq-report-in-duplicate-handling.png       # DQ_REPORT JSON from CloudWatch - India's 13.1% duplicate rate, still passes on validity_rate
 ├── s3-bronze-silver-gold-quarantine.png      # bucket showing all four prefixes populated
 ├── glue-job-run-success.png                  # a Bronze->Silver or Silver->Gold successful run's metrics
 ├── glue-crawler-and-catalog-table.png        # crawler result + resulting Silver table schema
@@ -496,6 +498,11 @@ screenshots/
 
 ![Step Functions execution history](screenshots/stepfunctions-execution-history.png)
 ![Step Functions DQ gate failure](screenshots/stepfunctions-pipeline-failed-dq-gate.png)
+
+*The `DQ_REPORT` itself, straight from CloudWatch logs - a clean US run next to the India run that actually tripped the gate on its 13.1% duplicate rate, and still correctly passes on `validity_rate` after the Problem #14 fix:*
+
+![DQ report - clean pass](screenshots/dq-report-us-clean-pass.png)
+![DQ report - duplicate handling](screenshots/dq-report-in-duplicate-handling.png)
 
 ### Dashboard
 
