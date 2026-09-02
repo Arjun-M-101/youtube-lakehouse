@@ -230,7 +230,7 @@ export TF_VAR_redshift_admin_password='use-the-same-password-as-before'   # if n
 ./scripts/run_dbt_step.sh
 ```
 
-What it does, in order: prints your current public IP and pauses for you to confirm it still matches the CIDR in `networking.tf`'s `redshift_access` ingress rule → `terraform apply -var="redshift_publicly_accessible=true"` to open the workgroup → `dbt seed`, `dbt run`, `dbt test` → `terraform apply` (no override, so the variable's `false` default takes over) to close it back to private. By the time it prints `Done.`, dbt has already succeeded and `gold.category_daily_summary` already has real data - go straight to Step 10.
+What it does, in order: reads your current public IP and passes it straight to Terraform as dbt_local_access_cidr (no manual CIDR editing, no pause-and-eyeball step anymore) → terraform apply -var="redshift_publicly_accessible=true" -var="dbt_local_access_cidr=<your-ip>/32" to open the workgroup, scoped to just that IP → dbt seed, dbt run, dbt test → terraform apply with no CIDR override, so it falls back to the unroutable 127.0.0.1/32 default, closing both the workgroup and the ingress rule back down. By the time it prints `Done.`, dbt has already succeeded and `gold.category_daily_summary` already has real data - go straight to Step 10.
 
 **If the script exits with an error partway through:** `set -euo pipefail` stops it immediately, which leaves the workgroup `publicly_accessible = true` on purpose - so you can debug the live connection instead of losing it. Don't walk away from a failed run; either fix and rerun, or close it back up manually before you stop:
 ```bash
@@ -369,7 +369,6 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 ```
 `rejected_validation_rows` was **zero** - every row in the file was structurally valid. The entire shortfall was 4,894 exact duplicate rows (13.1% of the file), a known characteristic of the India export in this Kaggle dataset. The original DQ formula scored duplicate rows the same as genuinely corrupt data, so a file that was 100% structurally valid still failed the gate purely because it had a naturally higher duplicate rate than US/GB.
 **Fix:** Changed `data_quality_report()` in `transform_logic.py` to compute `pass` from a `validity_rate` - `(clean_rows + duplicate_rows) / total_rows` - instead of `clean_rows / total_rows`. Duplicates are still fully quarantined out of Silver (dedup behavior didn't change); they're just no longer scored as if they were data corruption when deciding whether the file is trustworthy. `duplicate_rate` is still reported separately for visibility. All 61 existing unit tests still passed unmodified, and re-running the numbers above through the new formula gives `validity_rate = 1.0` - correctly reflecting that the file was clean. Re-uploaded the same `INvideos.csv`; it went straight through to `PipelineSucceeded`.
-**Why I'm keeping this in the README instead of hiding it:** a DQ gate that never once triggers isn't proof the gate works - it's proof it was never tested against real messy data. This is the strongest evidence in the whole project that the design does what it's supposed to do.
 
 ### 15. Dashboard showing an engagement ratio over 100 (physically impossible)
 **Symptom:** The QuickSight pivot table showed `avg_engagement_ratio` = 105.29 for the US region - `(likes + comments) / views` should realistically sit well under 1 for the overwhelming majority of videos.
@@ -381,8 +380,7 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 **Diagnosis:** Misleading first signal: the `redshift-data execute-statement` checks from Step 8 had worked fine moments earlier, which looked like proof the workgroup was reachable. It wasn't a useful signal either way - the Data API goes over the AWS control plane, not a direct network path, so it doesn't care about `publicly_accessible` at all. dbt, running from outside the VPC, connects over the real network path, and `redshift.tf` has `publicly_accessible = false` permanently baked in as the QuickSight-safe setting (Problem #11). The root cause was step ordering: this redeploy had run Step 10 (QuickSight) before Steps 8-9 (data + dbt), so the workgroup had been sitting at `false` the entire time dbt was trying to reach it.
 **Fix:** Two changes, not a one-off toggle:
 1. Turned `publicly_accessible` into a Terraform variable (`redshift_publicly_accessible` in `variables.tf`, default `false`) instead of a hardcoded value in `redshift.tf`, so it can be overridden per-apply without hand-editing the file.
-2. Added `scripts/run_dbt_step.sh`, which confirms the caller's public IP against the ingress CIDR, opens the workgroup (`publicly_accessible = true`), runs `dbt seed && dbt run && dbt test`, then closes it back to `false` - one guarded, deterministic pass instead of remembering to flip a flag twice. If dbt fails partway, `set -euo pipefail` stops the script with the workgroup left open on purpose, so the live connection is still there to debug rather than lost.
-**Why I'm keeping this in the README:** the timeout itself wasn't the real bug - it was that Steps 1-10 have a hard ordering dependency (QuickSight needs the workgroup private; dbt needs it public) that the original playbook never enforced. A script can guarantee the open/close pair happens correctly; it can't fix a human running Step 10 before Step 9. The actual fix is both: automate the toggle, and never reorder the steps.
+2. Added scripts/run_dbt_step.sh, which reads the caller's public IP and passes it to Terraform as the dbt_local_access_cidr variable, opens the workgroup (publicly_accessible = true), runs dbt seed && dbt run && dbt test, then closes it back to false — with the ingress CIDR also reverting to its unroutable default — one guarded, deterministic pass instead of remembering to flip a flag twice. If dbt fails partway, `set -euo pipefail` stops the script with the workgroup left open on purpose, so the live connection is still there to debug rather than lost.
 
 ### 17. Glue crawler failed on `glue:BatchGetPartition` after a schema update succeeded
 **Symptom:** CloudWatch logs for `youtube-lakehouse-silver-crawler` showed the crawl otherwise succeeding - `Classification complete`, `Table youtube in database youtube_lakehouse has been updated with new schema`, `UPDATE: 1` - immediately followed by `AccessDeniedException: Service Principal: glue.amazonaws.com is not authorized to perform: glue:BatchGetPartition on resource: arn:aws:glue:<region>:<account-id>:catalog`. The crawler run showed `1 table change, 0 partition changes` instead of registering any of the actual partitions present in S3.
@@ -470,19 +468,21 @@ This is the evidence a reviewer actually looks for - a README full of claims is 
 
 ```
 screenshots/
-├── stepfunctions-graph-succeeded.png       # graph view of a full green run - the single most important shot
-├── stepfunctions-execution-history.png     # shows the DataQualityGate branch decision
-├── stepfunctions-pipeline-failed-dq-gate.png   # optional - the IN failure, kept as proof of Production Problem #14
-├── s3-bronze-silver-gold-quarantine.png    # bucket showing all four prefixes populated
-├── glue-job-run-success.png                # a Bronze->Silver or Silver->Gold successful run's metrics
-├── glue-crawler-and-catalog-table.png      # crawler result + resulting Silver table schema
-├── redshift-query-editor-gold-counts.png   # Query Editor v2, SELECT on gold.category_daily_summary
-├── athena-video-detail-query-result.png    # the saved video-detail query, results shown
-├── secrets-manager-secret-names.png        # secret names only, never values
-├── eventbridge-scheduled-rule.png          # the daily backstop rule
-├── sns-subscription-confirmed.png          # confirmed email subscription
-├── github-actions-ci-green.png             # a passing CI run
-├── dbt-tests-passing.png                   # optional - all 27 dbt tests passing
+├── AWS_Architecture_Diagram-Dark.png         # Complete AWS architecture diagram - dark mode
+├── AWS_Architecture_Diagram-Default.png      # Complete AWS architecture diagram - light mode
+├── stepfunctions-graph-succeeded.png         # graph view of a full green run - the single most important shot
+├── stepfunctions-execution-history.png       # shows the DataQualityGate branch decision
+├── stepfunctions-pipeline-failed-dq-gate.png # optional - the IN failure, kept as proof of Production Problem #14
+├── s3-bronze-silver-gold-quarantine.png      # bucket showing all four prefixes populated
+├── glue-job-run-success.png                  # a Bronze->Silver or Silver->Gold successful run's metrics
+├── glue-crawler-and-catalog-table.png        # crawler result + resulting Silver table schema
+├── redshift-query-editor-gold-counts.png     # Query Editor v2, SELECT on gold.category_daily_summary
+├── athena-video-detail-query-result.png      # the saved video-detail query, results shown
+├── secrets-manager-secret-names.png          # secret names only, never values
+├── eventbridge-scheduled-rule.png            # the daily backstop rule
+├── sns-subscription-confirmed.png            # confirmed email subscription
+├── github-actions-ci-green.png               # a passing CI run
+├── dbt-tests-passing.png                     # optional - all 27 dbt tests passing
 ├── dashboard-bar-views-by-category.png
 ├── dashboard-line-trend-by-region.png
 └── dashboard-pivot-region-category.png
