@@ -523,6 +523,7 @@ screenshots/
 ├── eventbridge-scheduled-rule.png          # the daily backstop rule
 ├── sns-subscription-confirmed.png          # confirmed email subscription
 ├── github-actions-ci-green.png             # a passing CI run
+├── dbt-tests-passing.png                   # optional - all 27 dbt tests passing
 ├── dashboard-bar-views-by-category.png
 ├── dashboard-line-trend-by-region.png
 └── dashboard-pivot-region-category.png
