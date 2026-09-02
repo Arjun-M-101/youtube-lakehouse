@@ -30,7 +30,7 @@ variable "redshift_admin_password" {
 
 variable "redshift_publicly_accessible" {
   type    = bool
-  default = false  # QuickSight-safe default; only true transiently for dbt
+  default = false # QuickSight-safe default; only true transiently for dbt
 }
 
 variable "alert_email" {
