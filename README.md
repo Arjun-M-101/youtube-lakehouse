@@ -101,6 +101,9 @@ youtube-lakehouse/
 │   ├── redshift.tf, athena.tf, quicksight.tf, sns.tf
 │   └── terraform.tfvars.example    # Template - copy, never commit the real file
 │
+├── scripts/
+│   └── run_dbt_step.sh             # Guarded publicly_accessible open/close + dbt seed/run/test in one deterministic pass
+│
 ├── dbt_project/                    # Warehouse-side tests on Gold
 │
 ├── tests/                          # pytest - runs with no AWS account needed
@@ -253,22 +256,30 @@ aws athena start-query-execution \
 ```
 Or just open the Athena console, pick the `youtube-lakehouse-detail` workgroup, and run the saved `youtube-lakehouse-video-detail` or `youtube-lakehouse-likes-vs-comments` query directly - this is the easier path as a beginner.
 
-### 9. dbt tests against the warehouse
+### 9. dbt tests against the warehouse (guarded open/close script)
+
+Redshift Serverless runs with `publicly_accessible = false` permanently baked in - that's what makes QuickSight's VPC connection work (see [Production Problem #11](#-production-problems-i-hit-and-how-i-fixed-them)). But it also means dbt, running from your machine outside the VPC, has no network path to the workgroup at that setting - it'll hang for a few minutes and time out. Rather than hand-editing `redshift.tf` to flip it and remembering to flip it back, `publicly_accessible` is a Terraform variable now (`redshift_publicly_accessible` in `variables.tf`, default `false`), and `scripts/run_dbt_step.sh` drives the whole open-run-close sequence deterministically:
 
 ```bash
 cd dbt_project
 python3 -m pip install -r ../requirements-dbt.txt
-export DBT_PROFILES_DIR=$(pwd)
-export REDSHIFT_HOST="$(cd ../terraform && terraform output -raw redshift_workgroup_endpoint)"
-export REDSHIFT_USER='lakehouse_admin'
-export REDSHIFT_PASSWORD="$TF_VAR_redshift_admin_password"
 dbt deps
-dbt seed --profiles-dir .
-dbt run --profiles-dir .
-dbt test --profiles-dir .
+cd ..
+chmod +x scripts/run_dbt_step.sh   # once
+export TF_VAR_redshift_admin_password='use-the-same-password-as-before'   # if not already exported
+./scripts/run_dbt_step.sh
+```
+
+What it does, in order: prints your current public IP and pauses for you to confirm it still matches the CIDR in `networking.tf`'s `redshift_access` ingress rule → `terraform apply -var="redshift_publicly_accessible=true"` to open the workgroup → `dbt seed`, `dbt run`, `dbt test` → `terraform apply` (no override, so the variable's `false` default takes over) to close it back to private. By the time it prints `Done.`, dbt has already succeeded and `gold.category_daily_summary` already has real data - go straight to Step 10.
+
+**If the script exits with an error partway through:** `set -euo pipefail` stops it immediately, which leaves the workgroup `publicly_accessible = true` on purpose - so you can debug the live connection instead of losing it. Don't walk away from a failed run; either fix and rerun, or close it back up manually before you stop:
+```bash
+terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 ```
 
 ### 10. Build the QuickSight dashboard
+
+⚠️ **Do not run this step before Step 9 has finished successfully.** Steps 1→9 have a hard ordering dependency - the workgroup has to go through its dbt-open/dbt-close cycle *before* QuickSight ever reads from it. Running this step out of order (as happened once during a redeploy - see [Production Problem #16](#-production-problems-i-hit-and-how-i-fixed-them)) leaves the QuickSight dataset pointed at a workgroup that either has no data yet or, worse, is unreachable when Step 9 runs next. If a debugging session ever suggests jumping ahead "to fix an earlier error," that's the signal to stop and ask why before doing it.
 
 Terraform provisions the VPC connection, Redshift data source, and dataset - you build the visuals by hand (QuickSight analyses aren't cleanly Terraform-managed). In the QuickSight console:
 
@@ -405,6 +416,14 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 **Diagnosis:** Checked the actual computation in both `transform_logic.py` and the Spark aggregation in `silver_to_gold.py` - `avg_engagement_ratio` is correctly computed as an average per `(category, date, region)` bucket, each one a small decimal. The bug wasn't in the pipeline at all: the pivot table's column header literally read *"Sum of Avg_engagement_ratio"*. QuickSight's default field aggregation is `SUM`, and the table was rolled up across every category **and every one of ~200 trending dates** - summing ~200+ small daily averages is exactly how you get to 100+.
 **Fix:** Changed the field's aggregation in the QuickSight visual from `Sum` to `Average`. No pipeline or Terraform change needed. (For a more statistically rigorous version, a calculated field of `sum(total_likes + total_comments) / sum(total_views)` avoids the average-of-averages issue entirely - noted here as a possible future refinement, not required for correctness at this scale.)
 
+### 16. dbt seed connection timeout on a redeploy - `publicly_accessible = false` blocking the only network path in
+**Symptom:** `dbt seed` ran for ~4 minutes then failed with `Database Error ('connection time out', TimeoutError(110, 'Connection timed out'))`, on a redeploy where the exact same command had connected fine before.
+**Diagnosis:** Misleading first signal: the `redshift-data execute-statement` checks from Step 8 had worked fine moments earlier, which looked like proof the workgroup was reachable. It wasn't a useful signal either way - the Data API goes over the AWS control plane, not a direct network path, so it doesn't care about `publicly_accessible` at all. dbt, running from outside the VPC, connects over the real network path, and `redshift.tf` has `publicly_accessible = false` permanently baked in as the QuickSight-safe setting (Problem #11). The root cause was step ordering: this redeploy had run Step 10 (QuickSight) before Steps 8-9 (data + dbt), so the workgroup had been sitting at `false` the entire time dbt was trying to reach it.
+**Fix:** Two changes, not a one-off toggle:
+1. Turned `publicly_accessible` into a Terraform variable (`redshift_publicly_accessible` in `variables.tf`, default `false`) instead of a hardcoded value in `redshift.tf`, so it can be overridden per-apply without hand-editing the file.
+2. Added `scripts/run_dbt_step.sh`, which confirms the caller's public IP against the ingress CIDR, opens the workgroup (`publicly_accessible = true`), runs `dbt seed && dbt run && dbt test`, then closes it back to `false` - one guarded, deterministic pass instead of remembering to flip a flag twice. If dbt fails partway, `set -euo pipefail` stops the script with the workgroup left open on purpose, so the live connection is still there to debug rather than lost.
+**Why I'm keeping this in the README:** the timeout itself wasn't the real bug - it was that Steps 1-10 have a hard ordering dependency (QuickSight needs the workgroup private; dbt needs it public) that the original playbook never enforced. A script can guarantee the open/close pair happens correctly; it can't fix a human running Step 10 before Step 9. The actual fix is both: automate the toggle, and never reorder the steps.
+
 ## ✅ Key Takeaways
 
 - Demonstrates the Medallion Architecture (Bronze → Silver → Gold) on **real managed AWS services**, not local emulation.
@@ -415,6 +434,7 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 - dbt tests enforce grain uniqueness and business rules directly against the warehouse.
 - Full CI (pytest + `terraform fmt`/`validate` + `dbt parse`) on every push.
 - Every credential (API key, DB password) lives in Secrets Manager or an environment variable - never in a tracked file.
+- The Redshift public/private toggle dbt needs is a guarded script (`scripts/run_dbt_step.sh`) driven by a Terraform variable, not a manually-edited `.tf` file - one less way for a redeploy to end up in the wrong state.
 
 ## ⚖️ Trade-offs & Design Decisions
 
@@ -429,6 +449,8 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 **QuickSight over a code-first dashboard.** Chose QuickSight specifically to demonstrate AWS-native BI and VPC-connected access to a private warehouse, versus a Streamlit/Altair dashboard (which is what the earlier local version used). Trade-off: QuickSight analyses aren't cleanly Terraform-managed, so the visual build step is manual and undocumented-as-code - noted explicitly rather than glossed over.
 
 **Terraform for everything except the QuickSight analysis/dashboard itself.** Data sources, datasets, and the VPC connection are all Terraform-managed; the analysis/visual layer is a one-time manual build, because Terraform's QuickSight analysis support is thin and account-specific (template ARNs, etc.) in a way that doesn't reproduce cleanly across accounts.
+
+**A guarded toggle script over SSM port-forwarding for local dbt access.** Once `publicly_accessible = false` was locked in as the permanent QuickSight-safe setting (Problem #11), dbt needed some way to reach a private workgroup from outside the VPC. SSM port-forwarding would let the workgroup stay private all the time - more setup, but it kills the open/close cycle entirely. For a portfolio project that isn't redeployed often, `scripts/run_dbt_step.sh` (open → run dbt → close, in one guarded pass) was the simpler trade: less infrastructure, at the cost of a brief public window during each dbt run.
 
 ## 🔒 Sensitive Info & How I Push This Safely
 
