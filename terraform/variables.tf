@@ -28,6 +28,11 @@ variable "redshift_admin_password" {
   sensitive   = true
 }
 
+variable "redshift_publicly_accessible" {
+  type    = bool
+  default = false  # QuickSight-safe default; only true transiently for dbt
+}
+
 variable "alert_email" {
   description = "Email address for SNS pipeline failure alerts"
   type        = string

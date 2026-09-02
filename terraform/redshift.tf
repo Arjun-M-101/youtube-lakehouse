@@ -18,7 +18,7 @@ resource "aws_redshiftserverless_workgroup" "lakehouse" {
     aws_subnet.lakehouse_c.id,
   ]
   security_group_ids   = [aws_security_group.redshift_access.id]
-  publicly_accessible  = false
+  publicly_accessible  = var.redshift_publicly_accessible
   enhanced_vpc_routing = true
 }
 
