@@ -6,7 +6,7 @@ This is the AWS-native rebuild of my earlier local YouTube data engineering proj
 
 The first AWS account I tried this on turned out to be a dead end - Redshift and Glue were both blocked at the account level, not the IAM level (see [Production Problem #1](#-production-problems-i-hit-and-how-i-fixed-them) below). This repo is the clean rebuild on a working account.
 
-It ingests the [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/datasets/datasnaek/youtube-new) (multi-region CSV exports: US, GB, IN, and optionally CA/DE/FR/etc.), cleans and validates it, quarantines anything that doesn't meet quality rules, aggregates it into daily category/region summaries, loads it into a warehouse, and publishes a QuickSight dashboard on top.
+It ingests the [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/datasets/datasnaek/youtube-new) (multi-region CSV exports: US, IN, and optionally GB/CA/DE/FR/etc.), cleans and validates it, quarantines anything that doesn't meet quality rules, aggregates it into daily category/region summaries, loads it into a warehouse, and publishes a QuickSight dashboard on top.
 
 ## 🏗️ Architecture
 
@@ -222,14 +222,14 @@ aws secretsmanager put-secret-value \
 ```bash
 mkdir -p sample_data
 ```
-Download the CSVs from [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/datasets/datasnaek/youtube-new) into `sample_data/`. **Keep the original filenames** (`USvideos.csv`, `GBvideos.csv`, `INvideos.csv`, ...) - the pipeline resolves `region` from the filename, not from file content. A renamed file intentionally fails the `UNKNOWN_REGION` rule.
+Download the CSVs from [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/datasets/datasnaek/youtube-new) into `sample_data/`. **Keep the original filenames** (`USvideos.csv`, `INvideos.csv`, ...) - the pipeline resolves `region` from the filename, not from file content. A renamed file intentionally fails the `UNKNOWN_REGION` rule.
 
 ### 7. Upload to trigger the pipeline
 
 ```bash
 aws s3 cp sample_data/USvideos.csv s3://$(terraform output -raw lakehouse_bucket_name)/bronze/youtube/USvideos.csv
 ```
-Each upload independently triggers Lambda → Step Functions. Watch it in the Step Functions console (`youtube-lakehouse-batch-pipeline`) until it reaches `SUCCEEDED`. Repeat for GB, IN, or any other region file you want loaded - each run is a full, safe recompute (see [Data Flow](#-data-flow) below for why that's safe).
+Each upload independently triggers Lambda → Step Functions. Watch it in the Step Functions console (`youtube-lakehouse-batch-pipeline`) until it reaches `SUCCEEDED`. Repeat for IN, GB, or any other region file you want loaded - each run is a full, safe recompute (see [Data Flow](#-data-flow) below for why that's safe).
 
 ### 8. Verify the data landed
 
@@ -393,7 +393,7 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 **Fix:** Same fix, applied to the data-set resource's permission block.
 
 ### 14. The big one: pipeline failed loading `INvideos.csv` - data quality gate
-**Symptom:** Step Functions execution ended in `PipelineFailed`, cause: *"YouTube Lakehouse batch pipeline failed or was blocked by the data quality gate."* US and GB had already loaded successfully; IN was the first file to actually trip the gate.
+**Symptom:** Step Functions execution ended in `PipelineFailed`, cause: *"YouTube Lakehouse batch pipeline failed or was blocked by the data quality gate."* US and IN had already loaded successfully; IN was the first file to actually trip the gate.
 **Diagnosis:** Pulled the DQ report the job had already written to S3 (`dq-reports/bronze-to-silver/<run-id>.json`) instead of guessing from the error message alone:
 ```json
 {
