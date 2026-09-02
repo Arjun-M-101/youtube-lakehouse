@@ -57,6 +57,7 @@ data "aws_iam_policy_document" "glue_job_policy" {
       "glue:GetTable",
       "glue:GetTables",
       "glue:GetPartition",
+      "glue:BatchGetPartition",
       "glue:GetPartitions",
       "glue:BatchCreatePartition",
       "glue:CreateTable",
