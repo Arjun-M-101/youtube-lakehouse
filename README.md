@@ -4,7 +4,7 @@
 
 This is the AWS-native rebuild of my earlier local YouTube data engineering project (Airflow + Spark + Postgres + Streamlit - see [that repo](https://github.com/Arjun-M-101/Youtube_DE_Project) for the local version). Where the local version proved the Medallion Architecture on a single machine, this version proves the same design as real managed cloud infrastructure: event-driven ingestion, a serverless orchestrator, distributed Spark ETL on AWS Glue, an explicit data-quality gate, a private serverless warehouse, and a BI layer - all defined as code and torn down when not in use.
 
-The first AWS account I tried this on turned out to be a dead end - Redshift and Glue were both blocked at the account level, not the IAM level (see [Production Problem #1](#-production-problems-i-hit-and-how-i-fixed-them) below). This repo is the clean rebuild on a working account.
+The first AWS account I tried this on turned out to be a dead end - Redshift and Glue were both blocked at the account level, not the IAM level (see [Production Problem #1](#1-the-first-aws-account-was-never-viable---redshift-and-glue-blocked-at-the-account-level) below). This repo is the clean rebuild on a working account.
 
 It ingests the [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/datasets/datasnaek/youtube-new) (multi-region CSV exports: US, IN, and optionally GB/CA/DE/FR/etc.), cleans and validates it, quarantines anything that doesn't meet quality rules, aggregates it into daily category/region summaries, loads it into a warehouse, and publishes a QuickSight dashboard on top.
 
@@ -218,7 +218,7 @@ Or just open the Athena console, pick the `youtube-lakehouse-detail` workgroup, 
 
 ### 9. dbt tests against the warehouse (guarded open/close script)
 
-Redshift Serverless runs with `publicly_accessible = false` permanently baked in - that's what makes QuickSight's VPC connection work (see [Production Problem #11](#-production-problems-i-hit-and-how-i-fixed-them)). But it also means dbt, running from your machine outside the VPC, has no network path to the workgroup at that setting - it'll hang for a few minutes and time out. Rather than hand-editing `redshift.tf` to flip it and remembering to flip it back, `publicly_accessible` is a Terraform variable now (`redshift_publicly_accessible` in `variables.tf`, default `false`), and `scripts/run_dbt_step.sh` drives the whole open-run-close sequence deterministically:
+Redshift Serverless runs with `publicly_accessible = false` permanently baked in - that's what makes QuickSight's VPC connection work (see [Production Problem #16](#16-dbt-seed-connection-timeout-on-a-redeploy---publicly_accessible--false-blocking-the-only-network-path-in)). But it also means dbt, running from your machine outside the VPC, has no network path to the workgroup at that setting - it'll hang for a few minutes and time out. Rather than hand-editing `redshift.tf` to flip it and remembering to flip it back, `publicly_accessible` is a Terraform variable now (`redshift_publicly_accessible` in `variables.tf`, default `false`), and `scripts/run_dbt_step.sh` drives the whole open-run-close sequence deterministically:
 
 ```bash
 cd dbt_project
@@ -239,13 +239,13 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 
 ### 10. Build the QuickSight dashboard
 
-⚠️ **Do not run this step before Step 9 has finished successfully.** Steps 1→9 have a hard ordering dependency - the workgroup has to go through its dbt-open/dbt-close cycle *before* QuickSight ever reads from it. Running this step out of order (as happened once during a redeploy - see [Production Problem #16](#-production-problems-i-hit-and-how-i-fixed-them)) leaves the QuickSight dataset pointed at a workgroup that either has no data yet or, worse, is unreachable when Step 9 runs next. If a debugging session ever suggests jumping ahead "to fix an earlier error," that's the signal to stop and ask why before doing it.
+⚠️ **Do not run this step before Step 9 has finished successfully.** Steps 1→9 have a hard ordering dependency - the workgroup has to go through its dbt-open/dbt-close cycle *before* QuickSight ever reads from it. Running this step out of order (as happened once during a redeploy - see [Production Problem #16](#16-dbt-seed-connection-timeout-on-a-redeploy---publicly_accessible--false-blocking-the-only-network-path-in)) leaves the QuickSight dataset pointed at a workgroup that either has no data yet or, worse, is unreachable when Step 9 runs next. If a debugging session ever suggests jumping ahead "to fix an earlier error," that's the signal to stop and ask why before doing it.
 
 Terraform provisions the VPC connection, Redshift data source, and dataset - you build the visuals by hand (QuickSight analyses aren't cleanly Terraform-managed). In the QuickSight console:
 
 1. Open the `Category Daily Performance` dataset (`youtube-lakehouse-category-daily-performance`) → **Create analysis**.
 2. Build at minimum: a bar chart of `total_views` by `category_name`, a line chart of `video_count` by `trending_date` colored by `region`, and a pivot table of `total_views` / `avg_engagement_ratio` grouped by `region` → `category_name`.
-3. **On the engagement-ratio field specifically:** set its aggregation to **Average**, not the default **Sum** - see the [Production Problems](#-production-problems-i-hit-and-how-i-fixed-them) log below for why this matters and what it looks like when it's wrong.
+3. **On the engagement-ratio field specifically:** set its aggregation to **Average**, not the default **Sum** - see the [Production Problems](#-production-problems-i-hit---and-how-i-fixed-them) log below for why this matters and what it looks like when it's wrong.
 4. **Share → Publish dashboard.**
 
 ### 11. Capture proof before teardown
@@ -407,7 +407,7 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 
 **Full-refresh Gold recompute, not incremental.** Every Silver→Gold run reprocesses the entire historical Silver dataset rather than just the newly arrived partition. At this data volume the cost is trivial, and it completely eliminates a category of incremental-pipeline bugs (partial state, double-counting, drift between runs). At YouTube-actual scale this would need to become incremental with careful watermarking - a deliberate, stated trade-off for a portfolio-scale project.
 
-**Duplicate rows quarantined, not scored as corruption.** Chose to treat "the source file has redundant rows" and "the source file has malformed rows" as two different signals (see Production Problem #11) rather than lowering the DQ threshold to make the symptom go away. A lower threshold would have hidden genuinely bad data too; a formula that distinguishes the two doesn't.
+**Duplicate rows quarantined, not scored as corruption.** Chose to treat "the source file has redundant rows" and "the source file has malformed rows" as two different signals (see Production Problem #14) rather than lowering the DQ threshold to make the symptom go away. A lower threshold would have hidden genuinely bad data too; a formula that distinguishes the two doesn't.
 
 **Redshift Serverless over provisioned Redshift.** No cluster to size or pause/resume manually, and it scales to (near) zero cost between demo runs - the right trade for a portfolio project that isn't run continuously. A production workload with predictable, heavy concurrent load might do better on provisioned RA3 nodes with reserved pricing.
 
@@ -472,7 +472,7 @@ This is the evidence a reviewer actually looks for - a README full of claims is 
 screenshots/
 ├── stepfunctions-graph-succeeded.png       # graph view of a full green run - the single most important shot
 ├── stepfunctions-execution-history.png     # shows the DataQualityGate branch decision
-├── stepfunctions-pipeline-failed-dq-gate.png   # optional - the IN failure, kept as proof of Production Problem #11
+├── stepfunctions-pipeline-failed-dq-gate.png   # optional - the IN failure, kept as proof of Production Problem #14
 ├── s3-bronze-silver-gold-quarantine.png    # bucket showing all four prefixes populated
 ├── glue-job-run-success.png                # a Bronze->Silver or Silver->Gold successful run's metrics
 ├── glue-crawler-and-catalog-table.png      # crawler result + resulting Silver table schema
@@ -492,7 +492,7 @@ screenshots/
 
 ![Step Functions successful run](screenshots/stepfunctions-graph-succeeded.png)
 
-*The DQ gate branch, and the actual failure it caught on the India file (Production Problem #11 above):*
+*The DQ gate branch, and the actual failure it caught on the India file (Production Problem #14 above):*
 
 ![Step Functions execution history](screenshots/stepfunctions-execution-history.png)
 ![Step Functions DQ gate failure](screenshots/stepfunctions-pipeline-failed-dq-gate.png)
@@ -515,7 +515,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pytest tests/ -v
 ```
-61 tests covering transformation logic, the DQ report formula (including the duplicate-vs-invalid distinction from Production Problem #11), region resolution, deduplication, API retry behavior, category-response parsing, and Lambda trigger behavior - all without an AWS account.
+61 tests covering transformation logic, the DQ report formula (including the duplicate-vs-invalid distinction from Production Problem #14), region resolution, deduplication, API retry behavior, category-response parsing, and Lambda trigger behavior - all without an AWS account.
 
 ## 🧹 Teardown & Cost Control
 
@@ -534,7 +534,7 @@ Read the destroy plan before confirming - same discipline as every apply. QuickS
 - **Silver:** validate, normalize, deduplicate, quarantine bad rows with reasons, write partitioned Parquet.
 - **Gold:** distributed category/day/region aggregation, full-refresh into a private warehouse.
 - **Orchestration:** Step Functions owns retries, DQ branching, crawler sequencing, and failure alerting - Lambda is intentionally thin.
-- **Data quality:** a real gate that has actually triggered on real data (see Production Problem #11) and was refined based on what tripped it - not a pipeline that's simply never seen messy input.
+- **Data quality:** a real gate that has actually triggered on real data (see Production Problem #14) and was refined based on what tripped it - not a pipeline that's simply never seen messy input.
 - **Warehouse:** Redshift Serverless, fully private, VPC-connected BI.
 - **Ad hoc:** Athena reads Silver detail without forcing everything through Redshift.
 - **Testing:** Python unit tests cover functional logic; dbt covers warehouse constraints and business rules; CI runs both plus Terraform validation on every push.
