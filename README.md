@@ -10,47 +10,7 @@ It ingests the [Kaggle "YouTube Trending Video" dataset](https://www.kaggle.com/
 
 ## 🏗️ Architecture
 
-```
-                 S3 ObjectCreated (bronze/youtube/*.csv)
-                              │
-                              ▼
-                       Lambda (trigger_pipeline)
-                    thin - only starts Step Functions
-                              │
-                              ▼
-                 ┌─────────────────────────────┐
-                 │   Step Functions state machine │
-                 │  youtube-lakehouse-batch-pipeline │
-                 └─────────────────────────────┘
-                              │
-                 ┌────────────┴────────────┐
-                 ▼                          
-        Glue: Bronze → Silver               
-   (validate, clean, dedupe, quarantine,     
-    write DQ report to S3)                   
-                 │
-                 ▼
-        Read DQ report  ──► DataQualityGate (Choice state)
-                 │                       │
-            pass_rate ≥ threshold   pass_rate < threshold
-                 │                       │
-                 ▼                       ▼
-        Glue Crawler (Silver)     SNS: NotifyDataQualityFailure
-                 │                       │
-                 ▼                       ▼
-        Glue: Silver → Gold        Fail state: PipelineFailed
-     (aggregate, load Redshift
-      via JDBC, truncate+insert)
-                 │
-                 ▼
-        Redshift Serverless (private VPC, 3 AZs)
-                 │
-        ┌────────┴─────────┐
-        ▼                  ▼
-     Athena           QuickSight (VPC-connected)
-  (ad hoc Silver        dashboard on Gold
-   detail queries)
-```
+![](screenshots/AWS_Architecture_Diagram (Dark).png)
 
 A daily **EventBridge Scheduler** run also fires the same state machine with an empty `triggeredKey`, so Bronze → Silver reprocesses the full Bronze prefix as a backstop even if no new file lands that day.
 
