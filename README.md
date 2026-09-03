@@ -85,6 +85,7 @@ youtube-lakehouse/
 ├── .github/workflows/              # CI: pytest + terraform fmt/validate + dbt parse
 ├── requirements.txt / requirements-dbt.txt
 └── Makefile
+
 ```
 
 ## 🛠️ Prerequisites
@@ -107,6 +108,7 @@ git init
 git add .
 git status                     # confirm no .tfstate, .venv/, tfvars, or credentials are staged - see the security section below
 git commit -m "Initial commit: YouTube Lakehouse AWS data engineering project"
+
 ```
 
 <p align="justify">Create a new <strong>empty</strong> repository at <a href="https://github.com/new">github.com/new</a> - name it <code>youtube-lakehouse</code>, leave "Add a README/.gitignore/license" <strong>unchecked</strong> since you already have all three locally. Then:</p>
@@ -115,6 +117,7 @@ git commit -m "Initial commit: YouTube Lakehouse AWS data engineering project"
 git remote add origin https://github.com/<your-username>/youtube-lakehouse.git
 git branch -M main
 git push -u origin main
+
 ```
 
 <p align="justify">If GitHub rejects your password over HTTPS, generate a Personal Access Token (GitHub → Settings → Developer settings → Personal access tokens) and use that in place of the password, or run <code>gh auth login</code> if you have the GitHub CLI installed.</p>
@@ -131,12 +134,14 @@ cd youtube-lakehouse
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
 ```
 
 ### 2. Run the unit tests first (no AWS needed)
 
 ```bash
 pytest tests/ -v
+
 ```
 
 <p align="justify">These exercise validation rules, region resolution, deduplication, the DQ report formula, API retry/backoff, category-response parsing, and the Lambda trigger - all without touching AWS. Green tests here catch most logic bugs before they cost you a <code>terraform apply</code>.</p>
@@ -146,12 +151,14 @@ pytest tests/ -v
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
+
 ```
 
 <p align="justify">Edit <code>terraform.tfvars</code> and fill in <code>alert_email</code> and <code>quicksight_user_arn</code>. <strong>Never put the Redshift password in this file</strong> - it's supplied through an environment variable instead:</p>
 
 ```bash
 export TF_VAR_redshift_admin_password='use-a-strong-password-here'
+
 ```
 
 ### 4. Deploy
@@ -160,11 +167,16 @@ export TF_VAR_redshift_admin_password='use-a-strong-password-here'
 terraform init
 terraform validate
 terraform plan
+
 ```
+
 <p align="justify">Read the plan before applying - always. Then:</p>
+
 ```bash
 terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
+
 ```
+
 <p align="justify">Confirm the SNS subscription email that lands in your inbox - pipeline failure alerts won't reach you until you do.</p>
 
 ### 5. Store the YouTube API key in Secrets Manager
@@ -175,25 +187,31 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 aws secretsmanager put-secret-value \
   --secret-id youtube-lakehouse-youtube-data-api-key \
   --secret-string 'YOUR_YOUTUBE_API_KEY'
+
 ```
 
 ### 6. Get the data
 
 ```bash
 mkdir -p sample_data
+
 ```
+
 <p align="justify">Download the CSVs from <a href="https://www.kaggle.com/datasets/datasnaek/youtube-new">Kaggle &quot;YouTube Trending Video&quot; dataset</a> into <code>sample_data/</code>. <strong>Keep the original filenames</strong> (<code>USvideos.csv</code>, <code>INvideos.csv</code>, ...) - the pipeline resolves <code>region</code> from the filename, not from file content. A renamed file intentionally fails the <code>UNKNOWN_REGION</code> rule.</p>
 
 ### 7. Upload to trigger the pipeline
 
 ```bash
 aws s3 cp sample_data/USvideos.csv s3://$(terraform output -raw lakehouse_bucket_name)/bronze/youtube/USvideos.csv
+
 ```
+
 <p align="justify">Each upload independently triggers Lambda → Step Functions. Watch it in the Step Functions console (<code>youtube-lakehouse-batch-pipeline</code>) until it reaches <code>SUCCEEDED</code>. Repeat for IN, GB, or any other region file you want loaded - each run is a full, safe recompute (see <a href="#-data-flow">Data Flow</a> below for why that's safe).</p>
 
 ### 8. Verify the data landed
 
 <p align="justify">Redshift (Gold table row counts):</p>
+
 ```bash
 SECRET_ARN=$(aws secretsmanager describe-secret \
   --secret-id youtube-lakehouse-redshift-credentials \
@@ -204,16 +222,21 @@ aws redshift-data execute-statement \
   --database youtube_lakehouse \
   --sql "SELECT region, COUNT(*) FROM gold.category_daily_summary GROUP BY region" \
   --secret-arn "$SECRET_ARN"
+
 ```
+
 <p align="justify">Then <code>aws redshift-data describe-statement --id &lt;Id&gt;</code> and <code>get-statement-result</code> to see the counts.</p>
 
 <p align="justify">Athena (per-video Silver detail - the Terraform already saved two queries for you):</p>
+
 ```bash
 aws athena start-query-execution \
   --query-execution-context Database=youtube_lakehouse \
   --work-group youtube-lakehouse-detail \
   --named-query-id "$(aws athena list-named-queries --work-group youtube-lakehouse-detail --query 'NamedQueryIds[0]' --output text)"
+
 ```
+
 <p align="justify">Or just open the Athena console, pick the <code>youtube-lakehouse-detail</code> workgroup, and run the saved <code>youtube-lakehouse-video-detail</code> or <code>youtube-lakehouse-likes-vs-comments</code> query directly - this is the easier path as a beginner.</p>
 
 ### 9. dbt tests against the warehouse (guarded open/close script)
@@ -228,13 +251,16 @@ cd ..
 chmod +x scripts/run_dbt_step.sh   # once
 export TF_VAR_redshift_admin_password='use-the-same-password-as-before'   # if not already exported
 ./scripts/run_dbt_step.sh
+
 ```
 
 <p align="justify">What it does, in order: reads your current public IP and passes it straight to Terraform as dbt_local_access_cidr (no manual CIDR editing, no pause-and-eyeball step anymore) → terraform apply -var="redshift_publicly_accessible=true" -var="dbt_local_access_cidr=&lt;your-ip&gt;/32" to open the workgroup, scoped to just that IP → dbt seed, dbt run, dbt test → terraform apply with no CIDR override, so it falls back to the unroutable 127.0.0.1/32 default, closing both the workgroup and the ingress rule back down. By the time it prints <code>Done.</code>, dbt has already succeeded and <code>gold.category_daily_summary</code> already has real data - go straight to Step 10.</p>
 
 <p align="justify"><strong>If the script exits with an error partway through:</strong> <code>set -euo pipefail</code> stops it immediately, which leaves the workgroup <code>publicly_accessible = true</code> on purpose - so you can debug the live connection instead of losing it. Don't walk away from a failed run; either fix and rerun, or close it back up manually before you stop:</p>
+
 ```bash
 terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
+
 ```
 
 ### 10. Build the QuickSight dashboard
@@ -329,6 +355,7 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 
 ### 14. The big one: pipeline failed loading `INvideos.csv` - data quality gate
 <p align="justify"><strong>Symptom:</strong> Step Functions execution ended in <code>PipelineFailed</code>, cause: <em>"YouTube Lakehouse batch pipeline failed or was blocked by the data quality gate."</em> US and IN had already loaded successfully; IN was the first file to actually trip the gate. <strong>Diagnosis:</strong> Pulled the DQ report the job had already written to S3 (<code>dq-reports/bronze-to-silver/&lt;run-id&gt;.json</code>) instead of guessing from the error message alone:</p>
+
 ```json
 {
   "total_bronze_rows": 37352,
@@ -340,7 +367,9 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
   "reasons": { "DUPLICATE_ROW": 4894 },
   "rejected_validation_rows": 0
 }
+
 ```
+
 <p align="justify"><code>rejected_validation_rows</code> was <strong>zero</strong> - every row in the file was structurally valid. The entire shortfall was 4,894 exact duplicate rows (13.1% of the file), a known characteristic of the India export in this Kaggle dataset. The original DQ formula scored duplicate rows the same as genuinely corrupt data, so a file that was 100% structurally valid still failed the gate purely because it had a naturally higher duplicate rate than US/GB. <strong>Fix:</strong> Changed <code>data_quality_report()</code> in <code>transform_logic.py</code> to compute <code>pass</code> from a <code>validity_rate</code> - <code>(clean_rows + duplicate_rows) / total_rows</code> - instead of <code>clean_rows / total_rows</code>. Duplicates are still fully quarantined out of Silver (dedup behavior didn't change); they're just no longer scored as if they were data corruption when deciding whether the file is trustworthy. <code>duplicate_rate</code> is still reported separately for visibility. All 61 existing unit tests still passed unmodified, and re-running the numbers above through the new formula gives <code>validity_rate = 1.0</code> - correctly reflecting that the file was clean. Re-uploaded the same <code>INvideos.csv</code>; it went straight through to <code>PipelineSucceeded</code>.</p>
 
 ### 15. Dashboard showing an engagement ratio over 100 (physically impossible)
@@ -359,10 +388,13 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 
 ### 19. Redeploy blocked by stale Secrets Manager names and an un-subscribed QuickSight account
 <p align="justify"><strong>Symptom:</strong> On a redeploy, <code>terraform apply</code> failed with two unrelated errors in the same run: <code>InvalidRequestException: You can't create this secret because a secret with this name is already scheduled for deletion</code> on <strong>both</strong> Secrets Manager secrets, and <code>ResourceNotFoundException: Directory information for account &lt;id&gt; is not found</code> on the QuickSight VPC connection. <strong>Diagnosis:</strong> A prior <code>terraform destroy</code> had scheduled both secrets for deletion under AWS's default 30-day recovery window - the names stay reserved and can't be recreated until that window elapses or the secret is explicitly force-deleted. Separately, QuickSight requires a one-time manual account subscription through the console that Terraform can't provision - it hadn't survived the earlier teardown/rebuild cycle, so the VPC connection had no QuickSight account/directory to attach to. <strong>Fix:</strong> Force-deleted both secrets to free the names immediately instead of waiting out the recovery window:</p>
+
 ```bash
 aws secretsmanager delete-secret --secret-id youtube-lakehouse-youtube-data-api-key --force-delete-without-recovery
 aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credentials --force-delete-without-recovery
+
 ```
+
 <p align="justify">Then re-subscribed to QuickSight manually through the console (Standard edition) for the account/region before re-running <code>terraform apply</code>. <strong>Takeaway:</strong> <code>terraform destroy</code> doesn't fully reclaim Secrets Manager names or QuickSight's account-level subscription - both need explicit manual cleanup before a clean redeploy on the same account.</p>
 
 ## ✅ Key Takeaways
@@ -401,6 +433,7 @@ aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credenti
 <p align="justify">This project touches real AWS account IDs, a Redshift admin password, a YouTube API key, and Terraform state that contains resource ARNs. None of that belongs in git history. Here's exactly how it's kept out.</p>
 
 ### What's already gitignored (never staged)
+
 ```
 .venv/  venv/  __pycache__/  .pytest_cache/  *.pyc  *.pyo
 .terraform/
@@ -416,18 +449,25 @@ dbt_project/dbt_packages/
 dbt_project/logs/
 sample_data/*.csv
 sample_data/*.json
+
 ```
+
 <p align="justify"><code>terraform.tfstate</code> in particular can contain secret values in plaintext depending on the resource - it must <strong>never</strong> be committed. Only <code>terraform.tfvars.example</code> (placeholders only, no real values) is tracked.</p>
 
 ### Before every `git push`, run this checklist
+
 ```bash
 git status
+
 ```
+
 <p align="justify">Confirm <strong>none</strong> of these show up as staged or untracked-but-about-to-be-added: <code>.venv/</code>, <code>.terraform/</code>, <code>terraform.tfstate*</code>, <code>terraform.tfvars</code>, <code>dbt_project/target/</code>, <code>dbt_project/dbt_packages/</code>, any <code>*.zip</code> under <code>terraform/</code>.</p>
 
 ```bash
 git diff --cached | grep -iE "AKIA[0-9A-Z]{16}|aws_secret_access_key|secret_string|password\s*=\s*['\"]"
+
 ```
+
 <p align="justify">This should return nothing. If it returns something, <strong>unstage it and fix the source</strong> before committing - don't commit-then-fix, since the secret is then in history even if you remove it in a later commit.</p>
 
 ### Where secrets actually live instead
@@ -471,6 +511,7 @@ screenshots/
 ├── dashboard-bar-views-by-category.png
 ├── dashboard-line-trend-by-region.png
 └── dashboard-pivot-region-category.png
+
 ```
 
 ### Pipeline orchestration
@@ -511,7 +552,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pytest tests/ -v
+
 ```
+
 <p align="justify">64 tests covering transformation logic, the DQ report formula (including the duplicate-vs-invalid distinction from Production Problem #14), file-header schema drift detection, region resolution, deduplication, API retry behavior, category-response parsing, and Lambda trigger behavior - all without an AWS account.</p>
 
 ## 🧹 Teardown & Cost Control
@@ -522,7 +565,9 @@ pytest tests/ -v
 aws s3 rm "s3://$(cd terraform && terraform output -raw lakehouse_bucket_name)" --recursive
 cd terraform
 terraform destroy -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
+
 ```
+
 <p align="justify">Read the destroy plan before confirming - same discipline as every apply. QuickSight's account subscription itself is separate from Terraform and isn't touched by <code>destroy</code>; cancel it separately in the QuickSight console if you're done with it entirely.</p>
 
 ## 🗣️ Interview Story
