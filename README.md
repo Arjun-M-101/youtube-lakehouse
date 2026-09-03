@@ -530,18 +530,10 @@ screenshots/
 
 ### Incremental Gold proof
 
-These two prove `gold_incremental_mode` actually ran the watermark/`MERGE` path, not just that the code exists. Capture them together, right after a `gold_incremental_mode=true` run - both need the same live cycle, before any teardown:
+*Proof that `gold_incremental_mode` actually ran the watermark/`MERGE` path, not just that the code exists - the Glue job log showing the watermark filter and advance, next to the S3 control file it wrote:*
 
-1. **Get a baseline first.** If you haven't already, do one full-refresh run (`gold_incremental_mode = false`, the default) so Gold has real data and Redshift's table already exists.
-2. **Flip the toggle and trigger a new run:**
-   ```bash
-   cd terraform
-   terraform apply -var="gold_incremental_mode=true" -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
-   ```
-   Then upload a file to `bronze/youtube/` (a new region file, or re-upload one you already have) to trigger the pipeline the normal way.
-3. **`glue-job-silver-to-gold-incremental-merge.png`** - AWS Console → **Glue** → **ETL jobs** → `youtube-lakehouse-silver-to-gold` → **Runs** tab → open the run that just completed → **View CloudWatch logs** (or **Output logs**) for that run. In CloudWatch Logs, find the log stream for the run and search (Ctrl/Cmd-F in the browser, or the CloudWatch search box) for `INCREMENTAL_MODE:`. Screenshot the excerpt showing both lines - `INCREMENTAL_MODE: processing rows with trending_date > ...` and `INCREMENTAL_MODE: watermark advanced to ...` - then save as `screenshots/glue-job-silver-to-gold-incremental-merge.png`.
-4. **`s3-control-watermark-file.png`** - AWS Console → **S3** → your lakehouse bucket → navigate into the `control/` prefix → click `gold_watermark.json`. Screenshot the object listing (showing the file with its **Last modified** timestamp matching the run you just did) - optionally also open/download it to show the JSON body (`{"last_trending_date": "..."}`) in the same shot. Save as `screenshots/s3-control-watermark-file.png`.
-5. Once both are captured, you can leave `gold_incremental_mode` at `true` or set it back to `false` for future full-refresh runs - either works, since the toggle is fully reversible (Production Problem #18 above covers what happens if the two Glue arguments and the flag ever drift out of sync again).
+![Incremental Gold - watermark filter and advance applied](screenshots/glue-job-silver-to-gold-incremental-merge.png)
+![S3 control - gold watermark file](screenshots/s3-control-watermark-file.png)
 
 ### Dashboard
 
