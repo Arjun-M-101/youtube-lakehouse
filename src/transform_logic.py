@@ -17,6 +17,32 @@ REQUIRED_FIELDS = (
     "likes",
     "comment_count",
 )
+# Columns we know how to handle today. New columns showing up isn't fatal —
+# they're just ignored — but we want it visible, not silent. Missing a
+# REQUIRED_FIELDS column entirely (not just some rows having it blank) means
+# every row in the file will fail anyway; catching it here fails fast with a
+# clear reason instead of a wall of per-row MISSING_REQUIRED_FIELD rejects.
+EXPECTED_BRONZE_COLUMNS = {
+    "video_id", "trending_date", "title", "channel_title", "category_id",
+    "publish_time", "tags", "views", "likes", "dislikes", "comment_count",
+    "thumbnail_link", "comments_disabled", "ratings_disabled",
+    "video_error_or_removed", "description",
+}
+
+
+def detect_schema_drift(actual_columns: Iterable[str]) -> dict:
+    """File-level schema check, separate from per-row validation.
+    Never raises — always returns a report the caller decides what to do with."""
+    actual = set(actual_columns)
+    new_columns = sorted(actual - EXPECTED_BRONZE_COLUMNS)
+    missing_optional = sorted(EXPECTED_BRONZE_COLUMNS - actual - set(REQUIRED_FIELDS))
+    missing_required = sorted(set(REQUIRED_FIELDS) - actual)
+    return {
+        "new_columns": new_columns,
+        "missing_optional_columns": missing_optional,
+        "missing_required_columns": missing_required,
+        "drift_detected": bool(new_columns or missing_optional or missing_required),
+    }
 DUPLICATE_ROW = "DUPLICATE_ROW"
 
 

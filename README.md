@@ -20,10 +20,10 @@ Confirmed directly against the Terraform source - nothing here is aspirational, 
 
 | Service | Resource(s) in this repo | Role |
 |---|---|---|
-| **S3** | `s3.tf` | Bronze/Silver/Gold/Quarantine/DQ-reports data lake, versioned, encrypted, public access blocked |
+| **S3** | `s3.tf` | Bronze/Silver/Gold/Quarantine/DQ-reports/Control (Gold watermark) data lake, versioned, encrypted, public access blocked |
 | **Lambda** | `lambda.tf` | Thin S3-event trigger - starts Step Functions, does no data processing |
 | **Step Functions** | `step_functions.tf`, `step_functions/state_machine.json` | Orchestration: DQ branching, crawler wait/retry, success/failure handling |
-| **Glue (Spark ETL)** | `glue.tf` - `bronze-to-silver`, `silver-to-gold` jobs (Glue 5.1, G.1X workers) | Distributed transform + aggregate |
+| **Glue (Spark ETL)** | `glue.tf` - `bronze-to-silver`, `silver-to-gold` jobs (Glue 5.1, G.1X workers) | Distributed transform + aggregate; Silver->Gold supports an opt-in incremental watermark+`MERGE` mode via `gold_incremental_mode` (default: full refresh) |
 | **Glue Data Catalog + Crawler** | `glue.tf` - `silver-crawler` | Schema discovery for Silver Parquet |
 | **Redshift Serverless** | `redshift.tf` - private, 3-AZ, `publicly_accessible = false` | Gold warehouse (`gold.category_daily_summary`) |
 | **Athena** | `athena.tf` - `youtube-lakehouse-detail` workgroup, 2 saved queries | Ad-hoc per-video Silver queries |
@@ -263,6 +263,7 @@ Untransformed CSVs land at `s3://<bucket>/bronze/youtube/<REGION>videos.csv`. No
 - Rows that fail any check are quarantined to `s3://<bucket>/quarantine/youtube/` partitioned by `quarantine_reason` - nothing is silently dropped.
 - Surviving rows are deduplicated on `(video_id, trending_date, region)` - this grain matters: it's what stops a legitimately repeated video on a different day, or the same video trending in two different regions, from being treated as an accidental duplicate.
 - A **data-quality report** (`total_bronze_rows`, `validity_rate`, `duplicate_rate`, `reasons` breakdown) is written to S3 and read back by Step Functions to decide whether to continue.
+- Before row-level validation, the file's **header** is diffed against an explicit expected-columns list (`detect_schema_drift` in `transform_logic.py`): new columns are logged as a `SCHEMA_DRIFT` warning and passed through untouched (additive, non-breaking), while a missing *required* column fails the DQ gate immediately with a clear reason instead of surfacing as a wall of confusing per-row `MISSING_REQUIRED_FIELD` rejects. The result is recorded in the DQ report under `schema_drift`.
 - Category names are enriched via a live YouTube Data API v3 call, with the last-known-good reference JSON in S3 as a fallback if the API call fails.
 - Output is written to `s3://<bucket>/silver/youtube/`, partitioned by `region`/`trending_date`, with **dynamic partition overwrite** - a fresh run for one region/date only replaces that partition, leaving every other region and date untouched.
 
@@ -270,7 +271,8 @@ Untransformed CSVs land at `s3://<bucket>/bronze/youtube/<REGION>videos.csv`. No
 - Every run re-reads the **entire** Silver dataset (all regions, all history so far) and does a full distributed `groupBy(category_id, trending_date, region)` aggregation - `video_count`, `total_views`, `total_likes`, `total_dislikes`, `total_comments`, `avg_views_per_video`, `avg_engagement_ratio`.
 - Category names are joined in **after** aggregation (joining before it would get silently dropped by the groupBy - it's neither a grouping key nor an aggregate).
 - Unknown category IDs are labeled explicitly (`Unknown (24)`) rather than dropped.
-- Written to S3 Gold (partitioned, overwrite) and loaded into Redshift via JDBC using a stage-table `TRUNCATE` + `INSERT` pattern - this is a **full refresh, not an incremental append**, which is what keeps every run consistent with zero risk of double-counting or partial state.
+- Written to S3 Gold (partitioned, overwrite) and loaded into Redshift via JDBC using a stage-table `TRUNCATE` + `INSERT` pattern - this is a **full refresh, not an incremental append** by default, which is what keeps every run consistent with zero risk of double-counting or partial state.
+- **Incremental mode (opt-in, off by default):** setting the Terraform variable `gold_incremental_mode = true` switches this job to watermark-based processing instead - it reads only Silver rows with `trending_date` newer than a watermark stored at `s3://<bucket>/control/gold_watermark.json`, **appends** (rather than overwrites) the new Gold partitions in S3, and `MERGE`s into Redshift instead of `TRUNCATE`+`INSERT`, advancing the watermark only after a successful write. Leaving the variable at its default (`false`) preserves the original full-refresh behavior byte-for-byte.
 
 ### Serving
 - **Redshift Serverless** (private VPC, 3 AZs, `publicly_accessible = false`) holds `gold.category_daily_summary` as the primary analytics table.
@@ -387,6 +389,23 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 **Diagnosis:** The IAM policy on `youtube-lakehouse-glue-job-role` (`iam.tf`, `GlueCatalog` statement) already granted `glue:GetPartition`, `glue:GetPartitions`, and `glue:BatchCreatePartition`, but not the distinct `glue:BatchGetPartition` action the crawler uses internally to read back existing partition metadata before writing new partitions. A narrow least-privilege gap, not a data or Bronze->Silver logic problem - the table schema itself updated correctly, only the partition-registration step was blocked.
 **Fix:** Added `"glue:BatchGetPartition"` to the existing `actions` list in the `GlueCatalog` statement in `iam.tf` (one line, same statement, no new resource block), then `terraform plan` (confirmed only that one in-place policy change) and `terraform apply`. Re-ran the crawler - it completed `Succeeded` and registered all 410 existing partitions in a single run (`0 table changes, 410 partition changes`), since the underlying S3 files were partitioned correctly the whole time and only needed the Catalog to be able to see them.
 
+### 18. Incremental Gold - Glue job arguments landed on the wrong resource
+**Symptom:** After wiring up `--WATERMARK_PATH` and `--INCREMENTAL_MODE`, the `youtube-lakehouse-silver-to-gold` Glue job started failing every Step Functions run with `Error Category: INVALID_ARGUMENT_ERROR; ... GlueArgumentError: the following arguments are required: --WATERMARK_PATH, --INCREMENTAL_MODE` - even though those exact keys already existed somewhere in `glue.tf`.
+**Diagnosis:** `aws_glue_job` resources each have their own independent `default_arguments` block, and the two new lines had been added to `bronze_to_silver`'s block instead of `silver_to_gold`'s - two separate Terraform resources that happen to sit near each other in the file. `bronze_to_silver` picked up two arguments it never asked for (harmless, since `getResolvedOptions` only reads what it's told to look for); `silver_to_gold` - the job whose script actually declares `--WATERMARK_PATH`/`--INCREMENTAL_MODE` as required via `getResolvedOptions` - had no defaults for them at all, so every run failed before a single line of the script executed.
+**Fix:** Moved both lines out of `bronze_to_silver`'s `default_arguments` and into `silver_to_gold`'s, keeping the same `s3://<bucket>/control/gold_watermark.json` path and the same `tostring(var.gold_incremental_mode)` reference. Confirmed via `terraform plan` that only the `silver_to_gold` Glue job resource's arguments changed before applying. A temporary workaround - passing the same two arguments per-execution from `state_functions/state_machine.json`'s `SilverToGold` `Arguments` block - was tried first and then reverted once the real fix landed, so the toggle has one source of truth (the Glue job default, same pattern `bronze_to_silver` already used for its own arguments) instead of two places that could drift apart.
+**Takeaway:** `default_arguments` on an `aws_glue_job` resource only apply to that specific job. A correctly-formatted argument block on the *wrong* resource produces no Terraform error at all - it fails silently until the dependent job actually runs, which makes it look like a script bug rather than a copy-paste-into-the-wrong-block mistake.
+
+### 19. Redeploy blocked by stale Secrets Manager names and an un-subscribed QuickSight account
+**Symptom:** On a redeploy, `terraform apply` failed with two unrelated errors in the same run: `InvalidRequestException: You can't create this secret because a secret with this name is already scheduled for deletion` on **both** Secrets Manager secrets, and `ResourceNotFoundException: Directory information for account <id> is not found` on the QuickSight VPC connection.
+**Diagnosis:** A prior `terraform destroy` had scheduled both secrets for deletion under AWS's default 30-day recovery window - the names stay reserved and can't be recreated until that window elapses or the secret is explicitly force-deleted. Separately, QuickSight requires a one-time manual account subscription through the console that Terraform can't provision - it hadn't survived the earlier teardown/rebuild cycle, so the VPC connection had no QuickSight account/directory to attach to.
+**Fix:** Force-deleted both secrets to free the names immediately instead of waiting out the recovery window:
+```bash
+aws secretsmanager delete-secret --secret-id youtube-lakehouse-youtube-data-api-key --force-delete-without-recovery
+aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credentials --force-delete-without-recovery
+```
+Then re-subscribed to QuickSight manually through the console (Standard edition) for the account/region before re-running `terraform apply`.
+**Takeaway:** `terraform destroy` doesn't fully reclaim Secrets Manager names or QuickSight's account-level subscription - both need explicit manual cleanup before a clean redeploy on the same account.
+
 ## ✅ Key Takeaways
 
 - Demonstrates the Medallion Architecture (Bronze → Silver → Gold) on **real managed AWS services**, not local emulation.
@@ -398,12 +417,15 @@ This section is the part I actually think is worth reading. Anyone can post a wo
 - Full CI (pytest + `terraform fmt`/`validate` + `dbt parse`) on every push.
 - Every credential (API key, DB password) lives in Secrets Manager or an environment variable - never in a tracked file.
 - The Redshift public/private toggle dbt needs is a guarded script (`scripts/run_dbt_step.sh`) driven by a Terraform variable, not a manually-edited `.tf` file - one less way for a redeploy to end up in the wrong state.
+- File-level schema drift detection on Bronze headers, and an opt-in incremental watermark+`MERGE` path for Gold - both additive, both covered by unit tests, and both off/passive by default so the originally-tested full-refresh behavior stays the baseline unless deliberately overridden.
 
 ## ⚖️ Trade-offs & Design Decisions
 
 **Region resolved from filename, not content.** Simple and explicit, at the cost of requiring the uploader to keep Kaggle's original naming convention. The alternative (sniffing region from file content) would be more forgiving but far more fragile and harder to reason about.
 
-**Full-refresh Gold recompute, not incremental.** Every Silver→Gold run reprocesses the entire historical Silver dataset rather than just the newly arrived partition. At this data volume the cost is trivial, and it completely eliminates a category of incremental-pipeline bugs (partial state, double-counting, drift between runs). At YouTube-actual scale this would need to become incremental with careful watermarking - a deliberate, stated trade-off for a portfolio-scale project.
+**Full-refresh Gold recompute by default, incremental as an opt-in.** Every Silver→Gold run reprocesses the entire historical Silver dataset by default (`gold_incremental_mode = false`), which is trivial at this data volume and eliminates a whole category of incremental-pipeline bugs (partial state, double-counting, drift between runs). Setting `gold_incremental_mode = true` switches to watermark-based incremental loading with a Redshift `MERGE` instead - implemented, tested, and debugged (see [Production Problem #18](#18-incremental-gold---glue-job-arguments-landed-on-the-wrong-resource)) - but left off by default so the safer, simpler full-refresh path is what runs unless deliberately overridden.
+
+**Table format: plain Parquet, not Iceberg.** Silver and Gold are Hive-partitioned Parquet under Glue Catalog rather than an Iceberg table format. At this project's scale that's the simpler, lower-risk choice. At real scale, converting Gold to Iceberg (natively supported by Athena, Glue, and Redshift Spectrum) would replace the watermark-file + `MERGE` pattern above with native `MERGE INTO` and built-in schema evolution — a natural next step I'd take before this needed to run continuously in production.
 
 **Duplicate rows quarantined, not scored as corruption.** Chose to treat "the source file has redundant rows" and "the source file has malformed rows" as two different signals (see Production Problem #14) rather than lowering the DQ threshold to make the symptom go away. A lower threshold would have hidden genuinely bad data too; a formula that distinguishes the two doesn't.
 
@@ -478,6 +500,8 @@ screenshots/
 ├── s3-bronze-silver-gold-quarantine.png      # bucket showing all four prefixes populated
 ├── glue-job-run-success.png                  # a Bronze->Silver or Silver->Gold successful run's metrics
 ├── glue-crawler-and-catalog-table.png        # crawler result + resulting Silver table schema
+├── glue-job-silver-to-gold-incremental-merge.png  # CloudWatch logs from a gold_incremental_mode=true run - watermark filter + MERGE
+├── s3-control-watermark-file.png             # control/gold_watermark.json in S3 after an incremental run
 ├── redshift-query-editor-gold-counts.png     # Query Editor v2, SELECT on gold.category_daily_summary
 ├── athena-video-detail-query-result.png      # the saved video-detail query, results shown
 ├── secrets-manager-secret-names.png          # secret names only, never values
@@ -504,6 +528,21 @@ screenshots/
 ![DQ report - clean pass](screenshots/dq-report-us-clean-pass.png)
 ![DQ report - duplicate handling](screenshots/dq-report-in-duplicate-handling.png)
 
+### Incremental Gold proof
+
+These two prove `gold_incremental_mode` actually ran the watermark/`MERGE` path, not just that the code exists. Capture them together, right after a `gold_incremental_mode=true` run - both need the same live cycle, before any teardown:
+
+1. **Get a baseline first.** If you haven't already, do one full-refresh run (`gold_incremental_mode = false`, the default) so Gold has real data and Redshift's table already exists.
+2. **Flip the toggle and trigger a new run:**
+   ```bash
+   cd terraform
+   terraform apply -var="gold_incremental_mode=true" -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
+   ```
+   Then upload a file to `bronze/youtube/` (a new region file, or re-upload one you already have) to trigger the pipeline the normal way.
+3. **`glue-job-silver-to-gold-incremental-merge.png`** - AWS Console → **Glue** → **ETL jobs** → `youtube-lakehouse-silver-to-gold` → **Runs** tab → open the run that just completed → **View CloudWatch logs** (or **Output logs**) for that run. In CloudWatch Logs, find the log stream for the run and search (Ctrl/Cmd-F in the browser, or the CloudWatch search box) for `INCREMENTAL_MODE:`. Screenshot the excerpt showing both lines - `INCREMENTAL_MODE: processing rows with trending_date > ...` and `INCREMENTAL_MODE: watermark advanced to ...` - then save as `screenshots/glue-job-silver-to-gold-incremental-merge.png`.
+4. **`s3-control-watermark-file.png`** - AWS Console → **S3** → your lakehouse bucket → navigate into the `control/` prefix → click `gold_watermark.json`. Screenshot the object listing (showing the file with its **Last modified** timestamp matching the run you just did) - optionally also open/download it to show the JSON body (`{"last_trending_date": "..."}`) in the same shot. Save as `screenshots/s3-control-watermark-file.png`.
+5. Once both are captured, you can leave `gold_incremental_mode` at `true` or set it back to `false` for future full-refresh runs - either works, since the toggle is fully reversible (Production Problem #18 above covers what happens if the two Glue arguments and the flag ever drift out of sync again).
+
 ### Dashboard
 
 | Views by category | Trend over time by region |
@@ -522,7 +561,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pytest tests/ -v
 ```
-61 tests covering transformation logic, the DQ report formula (including the duplicate-vs-invalid distinction from Production Problem #14), region resolution, deduplication, API retry behavior, category-response parsing, and Lambda trigger behavior - all without an AWS account.
+64 tests covering transformation logic, the DQ report formula (including the duplicate-vs-invalid distinction from Production Problem #14), file-header schema drift detection, region resolution, deduplication, API retry behavior, category-response parsing, and Lambda trigger behavior - all without an AWS account.
 
 ## 🧹 Teardown & Cost Control
 

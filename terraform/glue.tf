@@ -171,6 +171,8 @@ resource "aws_glue_job" "silver_to_gold" {
     "--REDSHIFT_STAGE_TABLE"             = "gold.category_daily_summary_stage"
     "--REDSHIFT_TMP_DIR"                 = "s3://${aws_s3_bucket.lakehouse.bucket}/redshift-tmp/"
     "--CATEGORY_REF_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
+    "--WATERMARK_PATH"                   = "s3://${aws_s3_bucket.lakehouse.bucket}/control/gold_watermark.json"
+    "--INCREMENTAL_MODE"                 = tostring(var.gold_incremental_mode)
     "--enable-glue-datacatalog"          = "true"
     "--enable-metrics"                   = "true"
     "--enable-job-insights"              = "true"

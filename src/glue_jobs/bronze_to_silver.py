@@ -22,7 +22,12 @@ from pyspark.storagelevel import StorageLevel
 
 from api_client import fetch_category_metadata
 from category_enrichment import parse_category_api_response
-from transform_logic import data_quality_report, extract_region_from_filename, validate_and_clean_row
+from transform_logic import (
+    data_quality_report,
+    detect_schema_drift,
+    extract_region_from_filename,
+    validate_and_clean_row,
+)
 
 
 args = getResolvedOptions(
@@ -134,6 +139,15 @@ total_rows = bronze_df.count()
 if total_rows == 0:
     raise RuntimeError(f"No Bronze rows found at {input_path}")
 
+drift_report = detect_schema_drift([c for c in bronze_df.columns if c != "_source_file"])
+if drift_report["drift_detected"]:
+    print(f"WARNING: SCHEMA_DRIFT detected: {json.dumps(drift_report)}")
+if drift_report["missing_required_columns"]:
+    raise RuntimeError(
+        f"Bronze file at {input_path} is missing required columns: "
+        f"{drift_report['missing_required_columns']} — refusing to process."
+    )
+
 validated = bronze_df.rdd.mapPartitions(
     lambda iterator: (_clean_value(row.asDict(recursive=True), row["_source_file"]) for row in iterator)
 ).persist(StorageLevel.MEMORY_AND_DISK)
@@ -160,6 +174,7 @@ if clean_count == 0:
     report["quarantined_total_rows"] = int(rejected_count)
     report["run_id"] = args["RUN_ID"]
     report["input_path"] = input_path
+    report["schema_drift"] = drift_report
     report["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
     report_bucket, report_prefix = _bucket_and_key(args["DQ_REPORT_PATH"].rstrip("/"))
     report_key = args["DQ_REPORT_KEY"].strip() or f"{report_prefix}/{args['RUN_ID']}.json"
@@ -208,6 +223,7 @@ else:
     report["quarantined_total_rows"] = quarantine_count
     report["run_id"] = args["RUN_ID"]
     report["input_path"] = input_path
+    report["schema_drift"] = drift_report
     report["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
     report_bucket, report_prefix = _bucket_and_key(args["DQ_REPORT_PATH"].rstrip("/"))
     report_key = args["DQ_REPORT_KEY"].strip() or f"{report_prefix}/{args['RUN_ID']}.json"

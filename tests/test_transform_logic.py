@@ -320,6 +320,21 @@ def test_build_summary_separates_regions():
     out = build_category_daily_summary(rows, {24:"Entertainment"})
     assert len(out) == 2
 
+def test_detect_schema_drift_no_drift():
+    from transform_logic import detect_schema_drift, REQUIRED_FIELDS
+    report = detect_schema_drift(REQUIRED_FIELDS)
+    assert report["missing_required_columns"] == []
+
+def test_detect_schema_drift_flags_new_column():
+    from transform_logic import detect_schema_drift
+    report = detect_schema_drift(["video_id", "brand_new_field_youtube_added"])
+    assert "brand_new_field_youtube_added" in report["new_columns"]
+
+def test_detect_schema_drift_flags_missing_required():
+    from transform_logic import detect_schema_drift
+    report = detect_schema_drift(["video_id"])  # missing most required fields
+    assert report["drift_detected"] is True
+    assert len(report["missing_required_columns"]) > 0
 
 def test_dq_report_passes_threshold():
     report = data_quality_report(100, 98, [], 0, 0.95)

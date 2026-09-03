@@ -76,3 +76,9 @@ variable "dbt_local_access_cidr" {
   type        = string
   default     = "127.0.0.1/32"
 }
+
+variable "gold_incremental_mode" {
+  description = "If true, Silver->Gold only processes rows newer than the last watermark and MERGEs into Redshift instead of a full TRUNCATE+INSERT. Default false preserves the original full-refresh behavior."
+  type        = bool
+  default     = false
+}
