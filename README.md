@@ -490,25 +490,25 @@ This is the evidence a reviewer actually looks for - a README full of claims is 
 
 ```
 screenshots/
-├── AWS_Architecture_Diagram-Dark.png         # Complete AWS architecture diagram - dark mode
-├── AWS_Architecture_Diagram-Default.png      # Complete AWS architecture diagram - light mode
-├── stepfunctions-graph-succeeded.png         # graph view of a full green run - the single most important shot
-├── stepfunctions-execution-history.png       # shows the DataQualityGate branch decision
-├── stepfunctions-pipeline-failed-dq-gate.png # optional - the IN failure, kept as proof of Production Problem #14
-├── dq-report-us-clean-pass.png               # DQ_REPORT JSON from CloudWatch - clean US run
-├── dq-report-in-duplicate-handling.png       # DQ_REPORT JSON from CloudWatch - India's 13.1% duplicate rate, still passes on validity_rate
-├── s3-bronze-silver-gold-quarantine.png      # bucket showing all four prefixes populated
-├── glue-job-run-success.png                  # a Bronze->Silver or Silver->Gold successful run's metrics
-├── glue-crawler-and-catalog-table.png        # crawler result + resulting Silver table schema
+├── AWS_Architecture_Diagram-Dark.png              # Complete AWS architecture diagram - dark mode
+├── AWS_Architecture_Diagram-Default.png           # Complete AWS architecture diagram - light mode
+├── stepfunctions-graph-succeeded.png              # graph view of a full green run - the single most important shot
+├── stepfunctions-execution-history.png            # shows the DataQualityGate branch decision
+├── stepfunctions-pipeline-failed-dq-gate.png      # optional - the IN failure, kept as proof of Production Problem #14
+├── dq-report-us-clean-pass.png                    # DQ_REPORT JSON from CloudWatch - clean US run
+├── dq-report-in-duplicate-handling.png            # DQ_REPORT JSON from CloudWatch - India's 13.1% duplicate rate, still passes on validity_rate
+├── s3-bronze-silver-gold-quarantine.png           # bucket showing all four prefixes populated
+├── glue-job-run-success.png                       # a Bronze->Silver or Silver->Gold successful run's metrics
+├── glue-crawler-and-catalog-table.png             # crawler result + resulting Silver table schema
 ├── glue-job-silver-to-gold-incremental-merge.png  # CloudWatch logs from a gold_incremental_mode=true run - watermark filter + MERGE
-├── s3-control-watermark-file.png             # control/gold_watermark.json in S3 after an incremental run
-├── redshift-query-editor-gold-counts.png     # Query Editor v2, SELECT on gold.category_daily_summary
-├── athena-video-detail-query-result.png      # the saved video-detail query, results shown
-├── secrets-manager-secret-names.png          # secret names only, never values
-├── eventbridge-scheduled-rule.png            # the daily backstop rule
-├── sns-subscription-confirmed.png            # confirmed email subscription
-├── github-actions-ci-green.png               # a passing CI run
-├── dbt-tests-passing.png                     # optional - all 27 dbt tests passing
+├── s3-control-watermark-file.png                  # control/gold_watermark.json in S3 after an incremental run
+├── redshift-query-editor-gold-counts.png          # Query Editor v2, SELECT on gold.category_daily_summary
+├── athena-video-detail-query-result.png           # the saved video-detail query, results shown
+├── secrets-manager-secret-names.png               # secret names only, never values
+├── eventbridge-scheduled-rule.png                 # the daily backstop rule
+├── sns-subscription-confirmed.png                 # confirmed email subscription
+├── github-actions-ci-green.png                    # a passing CI run
+├── dbt-tests-passing.png                          # optional - all 27 dbt tests passing
 ├── dashboard-bar-views-by-category.png
 ├── dashboard-line-trend-by-region.png
 └── dashboard-pivot-region-category.png
