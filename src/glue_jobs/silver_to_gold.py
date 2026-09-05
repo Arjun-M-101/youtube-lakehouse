@@ -27,6 +27,7 @@ args = getResolvedOptions(
         "RUN_ID",
         "WATERMARK_PATH",
         "INCREMENTAL_MODE",
+        "GOLD_ICEBERG_PATH",
     ],
 )
 
@@ -128,6 +129,34 @@ print(f"Gold rows this run: {gold_row_count} (incremental_mode={incremental_mode
 
 gold.write.mode("overwrite" if not incremental_mode else "append") \
     .partitionBy("region", "trending_date").parquet(args["GOLD_PATH"])
+
+# --- Iceberg write: independent, additive copy of Gold. Failing here never
+# reaches the Redshift/dbt/QuickSight path below, which stays untouched.
+ICEBERG_TABLE = "glue_catalog.youtube_lakehouse.category_daily_summary_iceberg"
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {ICEBERG_TABLE} (
+        category_id INT, category_name STRING, trending_date DATE, region STRING,
+        video_count LONG, total_views LONG, total_likes LONG, total_dislikes LONG,
+        total_comments LONG, avg_views_per_video DOUBLE, avg_engagement_ratio DOUBLE
+    )
+    USING iceberg
+    PARTITIONED BY (region, trending_date)
+    LOCATION '{args["GOLD_ICEBERG_PATH"]}'
+""")
+
+if incremental_mode:
+    gold.createOrReplaceTempView("gold_iceberg_updates")
+    spark.sql(f"""
+        MERGE INTO {ICEBERG_TABLE} t
+        USING gold_iceberg_updates s
+        ON t.category_id = s.category_id AND t.trending_date = s.trending_date AND t.region = s.region
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+else:
+    gold.writeTo(ICEBERG_TABLE).overwritePartitions()
+
+print(f"Iceberg table {ICEBERG_TABLE} updated (incremental_mode={incremental_mode})")
 
 gold_dyf = DynamicFrame.fromDF(gold, glue_context, "gold_dyf")
 

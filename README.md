@@ -21,10 +21,10 @@
 | **S3** | `s3.tf` | Bronze/Silver/Gold/Quarantine/DQ-reports/Control (Gold watermark) data lake, versioned, encrypted, public access blocked |
 | **Lambda** | `lambda.tf` | Thin S3-event trigger - starts Step Functions, does no data processing |
 | **Step Functions** | `step_functions.tf`, `step_functions/state_machine.json` | Orchestration: DQ branching, crawler wait/retry, success/failure handling |
-| **Glue (Spark ETL)** | `glue.tf` - `bronze-to-silver`, `silver-to-gold` jobs (Glue 5.1, G.1X workers) | Distributed transform + aggregate; Silver->Gold supports an opt-in incremental watermark+`MERGE` mode via `gold_incremental_mode` (default: full refresh) |
-| **Glue Data Catalog + Crawler** | `glue.tf` - `silver-crawler` | Schema discovery for Silver Parquet |
-| **Redshift Serverless** | `redshift.tf` - private, 3-AZ, `publicly_accessible = false` | Gold warehouse (`gold.category_daily_summary`) |
-| **Athena** | `athena.tf` - `youtube-lakehouse-detail` workgroup, 2 saved queries | Ad-hoc per-video Silver queries |
+| **Glue (Spark ETL)** | `glue.tf` - `bronze-to-silver`, `silver-to-gold` jobs (Glue 5.1, G.1X workers) | Distributed transform + aggregate; Silver->Gold supports an opt-in incremental watermark+`MERGE` mode via `gold_incremental_mode` (default: full refresh); also writes a second, additive Apache Iceberg copy of Gold (`--datalake-formats=iceberg`) to `gold-iceberg/` for native ACID/time-travel querying |
+| **Glue Data Catalog + Crawler** | `glue.tf` - `silver-crawler` | Schema discovery for Silver Parquet; the Iceberg Gold table self-registers in the same catalog on write (calling the Glue API from inside the VPC via a dedicated interface endpoint in `networking.tf`), no separate crawler needed |
+| **Redshift Serverless** | `redshift.tf` - private, 3-AZ, `publicly_accessible = false` | Gold warehouse (`gold.category_daily_summary`), loaded via JDBC `MERGE`/`TRUNCATE+INSERT` - unaffected by the Iceberg addition below |
+| **Athena** | `athena.tf` - `youtube-lakehouse-detail` workgroup, 2 saved queries | Ad-hoc per-video Silver queries, plus ACID/time-travel queries against the Iceberg Gold table (`category_daily_summary_iceberg`) |
 | **QuickSight** | `quicksight.tf` - VPC connection, Redshift data source, `category-daily-performance` dataset | BI dashboard on Gold |
 | **SNS** | `sns.tf` | Pipeline/DQ failure alerts |
 | **CloudWatch** | via Glue/Lambda logging flags | Logs + metrics |
@@ -297,6 +297,7 @@ terraform apply -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 - Unknown category IDs are labeled explicitly (`Unknown (24)`) rather than dropped.
 - Written to S3 Gold (partitioned, overwrite) and loaded into Redshift via JDBC using a stage-table `TRUNCATE` + `INSERT` pattern - this is a **full refresh, not an incremental append** by default, which is what keeps every run consistent with zero risk of double-counting or partial state.
 - **Incremental mode (opt-in, off by default):** setting the Terraform variable `gold_incremental_mode = true` switches this job to watermark-based processing instead - it reads only Silver rows with `trending_date` newer than a watermark stored at `s3://<bucket>/control/gold_watermark.json`, **appends** (rather than overwrites) the new Gold partitions in S3, and `MERGE`s into Redshift instead of `TRUNCATE`+`INSERT`, advancing the watermark only after a successful write. Leaving the variable at its default (`false`) preserves the original full-refresh behavior byte-for-byte.
+- **Apache Iceberg copy (additive):** the same job also writes Gold as a real Apache Iceberg table (`youtube_lakehouse.category_daily_summary_iceberg`, `s3://<bucket>/gold-iceberg/category_daily_summary/`) via native Glue 5.1 Iceberg support (`--datalake-formats=iceberg`). In incremental mode this path also uses a genuine Iceberg `MERGE INTO`; in full-refresh mode it uses `overwritePartitions()`. This is a second, independent write - it runs after the flat-Parquet Gold write and before the Redshift load, and a failure here fails the job **before** the Redshift write, so the live Redshift/dbt/QuickSight path can never see a partial state because of it. It does not replace or feed the Redshift path in any way; it exists so Athena can run real ACID/snapshot/time-travel queries against Gold, addressing the "no modern table format" gap directly.
 
 ### Serving
 - **Redshift Serverless** (private VPC, 3 AZs, `publicly_accessible = false`) holds `gold.category_daily_summary` as the primary analytics table.
@@ -367,6 +368,23 @@ aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credenti
 
 <p align="justify">Then re-subscribed to QuickSight manually through the console (Standard edition) for the account/region before re-running <code>terraform apply</code>. <strong>Takeaway:</strong> <code>terraform destroy</code> doesn't fully reclaim Secrets Manager names or QuickSight's account-level subscription - both need explicit manual cleanup before a clean redeploy on the same account.</p>
 
+### 12. Adding the Iceberg Gold write broke on a Glue Data Catalog API timeout - a missing VPC endpoint, not a code bug
+<p align="justify"><strong>Symptom:</strong> After adding the Iceberg <code>CREATE TABLE ... USING iceberg</code> write to <code>silver_to_gold.py</code>, the job got through the Parquet Gold write and the Redshift connection setup, then failed with <code>Unable to execute HTTP request: Connect to glue.&lt;region&gt;.amazonaws.com:443 ... Connect timed out (SDK Attempt Count: 3)</code> at the exact line calling <code>spark.sql("CREATE TABLE IF NOT EXISTS glue_catalog...")</code>. <strong>Diagnosis:</strong> <code>silver_to_gold</code> already runs with a <code>connections</code> block (for the Redshift JDBC connection), which routes the <em>entire</em> job's network traffic through the private VPC's ENIs instead of AWS's own backend. Every other Glue Catalog interaction this project had (the Silver crawler, <code>--enable-glue-datacatalog</code> on the Parquet path) is handled internally by the Glue service itself - the Iceberg write was the first time this job's own code called the Glue Data Catalog API (<code>GetTable</code>/<code>CreateTable</code>, via the Iceberg <code>GlueCatalog</code> client) from inside the VPC. <code>networking.tf</code> already had interface endpoints for Secrets Manager, Logs, and STS to avoid a NAT Gateway - but not for Glue itself, so that one call had no private path and no public one (no NAT), and timed out after three retries. <strong>Fix:</strong> Added one more interface VPC endpoint, following the exact same pattern as the existing three:</p>
+
+```hcl
+resource "aws_vpc_endpoint" "glue" {
+  vpc_id              = aws_vpc.lakehouse.id
+  service_name        = "com.amazonaws.${var.aws_region}.glue"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.lakehouse_a.id, aws_subnet.lakehouse_b.id, aws_subnet.lakehouse_c.id]
+  security_group_ids  = [aws_security_group.glue_endpoints.id]
+  private_dns_enabled = true
+}
+
+```
+
+<p align="justify">With <code>private_dns_enabled = true</code>, the same <code>glue.&lt;region&gt;.amazonaws.com</code> hostname the job already calls now resolves privately inside the VPC - no code or job-argument change needed anywhere. <strong>Takeaway:</strong> attaching a Glue job to a VPC connection (for Redshift, in this case) silently changes the network path for <em>every</em> AWS API call that job's own code makes, not just the JDBC traffic the connection was added for. Any new AWS SDK call added later - Iceberg's Glue Catalog client here - needs its own private network path (interface endpoint or NAT) even if unrelated services were already working fine.</p>
+
 ## ✅ Key Takeaways
 
 - Demonstrates the Medallion Architecture (Bronze → Silver → Gold) on **real managed AWS services**, not local emulation.
@@ -375,6 +393,8 @@ aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credenti
 - Schema drift is detected at the file level before row validation runs, and Gold supports an opt-in incremental load path (S3 watermark + Redshift `MERGE`) alongside the full-refresh default.
 - An explicit, tested, and **actually-triggered** data-quality gate with S3-quarantine, not just a checkbox that's always green.
 - Redshift Serverless runs fully private (no public endpoint) with a VPC-connected QuickSight dashboard on top.
+- Gold also lands as a genuine Apache Iceberg table (ACID, snapshots, time travel via Athena), written independently of the live Redshift/dbt/QuickSight path so it can never affect it.
+- Four VPC interface endpoints (Secrets Manager, Logs, STS, Glue) plus an S3 gateway endpoint keep every private-subnet AWS API call working with zero NAT Gateway cost.
 - dbt tests enforce grain uniqueness and business rules directly against the warehouse.
 - Full CI (pytest + `terraform fmt`/`validate` + `dbt parse`) on every push.
 - Every credential (API key, DB password) lives in Secrets Manager or an environment variable - never in a tracked file.
@@ -386,7 +406,7 @@ aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credenti
 
 **Full-refresh Gold by default, incremental built as opt-in.** Every Silver→Gold run reprocesses the entire historical Silver dataset by default - at this data volume the cost is trivial, and it eliminates a whole category of incremental-pipeline bugs (partial state, double-counting, drift between runs). That's no longer the only mode, though: setting `gold_incremental_mode = true` in Terraform switches the job to a watermark-based path - a `control/gold_watermark.json` file in S3 tracks the last processed `trending_date`, the Silver read is filtered to rows newer than that watermark, and the Redshift load switches from a `TRUNCATE + INSERT` to a `MERGE` keyed on `(category_id, trending_date, region)`. Full-refresh stays the default because it's simpler and safer at this scale - but the incremental path is real and tested, gated behind one Terraform variable, not just a stated intention.
 
-<p align="justify"><strong>Table format: plain Parquet, not Iceberg.</strong> Silver and Gold are Hive-partitioned Parquet under Glue Catalog rather than an Iceberg table format. At this project's scale that's the simpler, lower-risk choice. At real scale, converting Gold to Iceberg (natively supported by Athena, Glue, and Redshift Spectrum) would replace the watermark-file + <code>MERGE</code> pattern above with native <code>MERGE INTO</code> and built-in schema evolution — a natural next step I'd take before this needed to run continuously in production.</p>
+<p align="justify"><strong>Table format: Silver stays plain Parquet; Gold gets an additive Apache Iceberg copy alongside its existing Redshift path.</strong> Silver is Hive-partitioned Parquet under Glue Catalog - simple, and nothing downstream needs Iceberg's transactional features for detail-level data. Gold's live serving path (dbt → Redshift → QuickSight) already had genuine ACID/<code>MERGE</code> semantics before this addition - the JDBC load performs a real <code>MERGE INTO</code> (incremental mode) or <code>TRUNCATE</code>+<code>INSERT</code> (full refresh) directly against Redshift, so adding Iceberg doesn't change or improve that path. What it adds is a second, independent, genuinely Iceberg-format copy of Gold at <code>gold-iceberg/</code>, registered in the same Glue Catalog, so Athena can run real ACID commits, snapshot isolation, and <code>time-travel</code>/<code>DESCRIBE HISTORY</code> queries directly - the concrete "no modern table format" gap in a plain-Parquet lakehouse, demonstrated rather than just described. It's additive by design: if this write fails, it fails before the Redshift load runs, so the live Redshift/dbt/QuickSight path can't be affected by it either way.</p>
 
 <p align="justify"><strong>Duplicate rows quarantined, not scored as corruption.</strong> Chose to treat "the source file has redundant rows" and "the source file has malformed rows" as two different signals (see Production Problem #7) rather than lowering the DQ threshold to make the symptom go away. A lower threshold would have hidden genuinely bad data too; a formula that distinguishes the two doesn't.</p>
 
@@ -473,6 +493,10 @@ screenshots/
 ├── s3-control-watermark-file.png                  # control/gold_watermark.json in S3 after an incremental run
 ├── redshift-query-editor-gold-counts.png          # Query Editor v2, SELECT on gold.category_daily_summary
 ├── athena-video-detail-query-result.png           # the saved video-detail query, results shown
+├── s3-gold-iceberg-prefix.png                     # gold-iceberg/category_daily_summary/ showing real data/ + metadata/ folders
+├── glue-job-log-iceberg-write.png                 # CloudWatch: "Iceberg table ... updated" line from the new write block
+├── athena-iceberg-table-query.png                 # SELECT * FROM category_daily_summary_iceberg, results shown
+├── athena-iceberg-time-travel.png                 # DESCRIBE HISTORY / $history metadata-table query, proving real snapshots
 ├── secrets-manager-secret-names.png               # secret names only, never values
 ├── eventbridge-scheduled-rule.png                 # the daily backstop rule
 ├── sns-subscription-confirmed.png                 # confirmed email subscription
@@ -504,6 +528,15 @@ screenshots/
 
 ![Incremental Gold - watermark filter and advance applied](screenshots/glue-job-silver-to-gold-incremental-merge.png)
 ![S3 control - gold watermark file](screenshots/s3-control-watermark-file.png)
+
+### Iceberg Gold proof
+
+<p align="justify"><em>Proof the additive Iceberg copy is a real Iceberg table, not just flat Parquet with a new name - the S3 layout showing genuine <code>data/</code> and <code>metadata/</code> folders, the Glue job log confirming the write, and an Athena query returning a snapshot history rather than just rows:</em></p>
+
+![S3 - gold-iceberg prefix with data/metadata folders](screenshots/s3-gold-iceberg-prefix.png)
+![Glue job log - Iceberg write confirmed](screenshots/glue-job-log-iceberg-write.png)
+![Athena - Iceberg table query result](screenshots/athena-iceberg-table-query.png)
+![Athena - Iceberg time travel / snapshot history](screenshots/athena-iceberg-time-travel.png)
 
 ### Dashboard
 
@@ -544,7 +577,7 @@ terraform destroy -var="redshift_admin_password=$TF_VAR_redshift_admin_password"
 
 - **Bronze:** preserve source data as-is; region is derived from filename, not inferred from content.
 - **Silver:** validate, normalize, deduplicate, quarantine bad rows with reasons, write partitioned Parquet.
-- **Gold:** distributed category/day/region aggregation, full-refresh into a private warehouse by default, with an opt-in incremental watermark+`MERGE` path.
+- **Gold:** distributed category/day/region aggregation, full-refresh into a private warehouse by default, with an opt-in incremental watermark+`MERGE` path - plus an additive Apache Iceberg copy for ACID/time-travel querying via Athena, written independently of (and never able to affect) the live Redshift/dbt/QuickSight path.
 - **Orchestration:** Step Functions owns retries, DQ branching, crawler sequencing, and failure alerting - Lambda is intentionally thin.
 - **Data quality:** a real gate that has actually triggered on real data (see Production Problem #7) and was refined based on what tripped it - not a pipeline that's simply never seen messy input.
 - **Warehouse:** Redshift Serverless, fully private, VPC-connected BI.

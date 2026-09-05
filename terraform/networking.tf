@@ -184,3 +184,12 @@ resource "aws_vpc_endpoint" "sts" {
   security_group_ids  = [aws_security_group.glue_endpoints.id]
   private_dns_enabled = true
 }
+
+resource "aws_vpc_endpoint" "glue" {
+  vpc_id              = aws_vpc.lakehouse.id
+  service_name        = "com.amazonaws.${var.aws_region}.glue"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.lakehouse_a.id, aws_subnet.lakehouse_b.id, aws_subnet.lakehouse_c.id]
+  security_group_ids  = [aws_security_group.glue_endpoints.id]
+  private_dns_enabled = true
+}

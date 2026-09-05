@@ -173,12 +173,15 @@ resource "aws_glue_job" "silver_to_gold" {
     "--CATEGORY_REF_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/reference/categories/"
     "--WATERMARK_PATH"                   = "s3://${aws_s3_bucket.lakehouse.bucket}/control/gold_watermark.json"
     "--INCREMENTAL_MODE"                 = tostring(var.gold_incremental_mode)
+    "--GOLD_ICEBERG_PATH"                = "s3://${aws_s3_bucket.lakehouse.bucket}/gold-iceberg/category_daily_summary/"
     "--enable-glue-datacatalog"          = "true"
     "--enable-metrics"                   = "true"
     "--enable-job-insights"              = "true"
     "--enable-observability-metrics"     = "true"
     "--enable-continuous-cloudwatch-log" = "true"
     "--job-bookmark-option"              = "job-bookmark-disable"
+    "--datalake-formats"                 = "iceberg"
+    "--conf"                             = "spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.glue_catalog.warehouse=s3://${aws_s3_bucket.lakehouse.bucket}/gold-iceberg/ --conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog --conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
   }
 
   connections = [aws_glue_connection.redshift.name]
