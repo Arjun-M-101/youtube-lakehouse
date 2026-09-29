@@ -60,7 +60,7 @@ youtube-lakehouse/
 │   └── terraform.tfvars.example    # Template - copy, never commit the real file
 │
 ├── scripts/
-│   └── run_dbt_step.sh             # Guarded publicly_accessible open/close + dbt seed/run/test in one deterministic pass
+│   └── run_dbt_step.sh             # Guarded publicly_accessible open/close + dbt seed/run/test + docs generate in one deterministic pass
 │
 ├── dbt_project/                    # Warehouse-side tests on Gold
 │
@@ -253,6 +253,8 @@ export TF_VAR_redshift_admin_password='use-the-same-password-as-before'   # if n
 ```
 
 <p align="justify">What it does, in order: reads your current public IP and passes it straight to Terraform as dbt_local_access_cidr (no manual CIDR editing, no pause-and-eyeball step anymore) → terraform apply -var="redshift_publicly_accessible=true" -var="dbt_local_access_cidr=&lt;your-ip&gt;/32" to open the workgroup, scoped to just that IP → dbt seed, dbt run, dbt test → terraform apply with no CIDR override, so it falls back to the unroutable 127.0.0.1/32 default, closing both the workgroup and the ingress rule back down. By the time it prints <code>Done.</code>, dbt has already succeeded and <code>gold.category_daily_summary</code> already has real data - go straight to Step 10.</p>
+
+<p align="justify"><strong>dbt docs (lineage graph):</strong> the script also runs <code>dbt docs generate --static</code> while the workgroup is still open, because generating the documentation catalog needs a live warehouse connection to read table and column metadata. It writes a single self-contained page to <code>dbt_project/target/static_index.html</code> (that folder is gitignored, so the screenshot below is the committed evidence). Once the workgroup is private again you don't need the warehouse to <em>read</em> the docs - just open that file in a browser and click the lineage-graph icon (bottom-right) to see source → staging → mart. If you prefer a local server instead, <code>dbt docs serve --profiles-dir . --port 8080</code> from <code>dbt_project/</code> also works without a warehouse connection, as long as the same <code>REDSHIFT_*</code> environment variables are set in that shell so the profile still loads. A failed docs step prints a warning but does not stop the script, so the workgroup is always closed at the end.</p>
 
 <p align="justify"><strong>If the script exits with an error partway through:</strong> <code>set -euo pipefail</code> stops it immediately, which leaves the workgroup <code>publicly_accessible = true</code> on purpose - so you can debug the live connection instead of losing it. Don't walk away from a failed run; either fix and rerun, or close it back up manually before you stop:</p>
 
@@ -502,6 +504,15 @@ screenshots/
 ├── sns-subscription-confirmed.png                 # confirmed email subscription
 ├── github-actions-ci-green.png                    # a passing CI run
 ├── dbt-tests-passing.png                          # optional - all 27 dbt tests passing
+├── dbt-docs-lineage.png                           # dbt docs lineage graph: source -> staging -> mart
+├── iam-roles-list.png                             # IAM roles filtered on youtube-lakehouse (account ID redacted)
+├── iam-glue-role-batchgetpartition.png            # glue-job-role policy showing glue:BatchGetPartition (Production Problem #9)
+├── lambda-s3-trigger.png                          # trigger_pipeline function with its S3 trigger on bronze/
+├── stepfunctions-definition-retry-dq-gate.png     # state machine definition: Retry block + DataQualityGate Choice state
+├── glue-job-silver-to-gold-details.png            # optional - Glue version, G.1X, 2 workers, VPC connection
+├── redshift-table-sizes.png                       # svv_table_info result: rows and MB for the gold and marts tables
+├── redshift-workgroup-private-config.png          # workgroup youtube-lakehouse-wg: 8/16 RPU, Publicly accessible = Off
+├── vpc-endpoints.png                              # S3 gateway + 4 interface endpoints, no NAT gateway
 ├── dashboard-bar-views-by-category.png
 ├── dashboard-line-trend-by-region.png
 └── dashboard-pivot-region-category.png
@@ -537,6 +548,31 @@ screenshots/
 ![Glue job log - Iceberg write confirmed](screenshots/glue-job-log-iceberg-write.png)
 ![Athena - Iceberg table query result](screenshots/athena-iceberg-table-query.png)
 ![Athena - Iceberg time travel / snapshot history](screenshots/athena-iceberg-time-travel.png)
+
+### Security, networking and access proof
+
+<p align="justify"><em>Least-privilege IAM, the network layout that replaces a NAT Gateway, and the private Redshift workgroup. The <code>glue:BatchGetPartition</code> statement is the exact permission missing in Production Problem #9. Account IDs are redacted in every screenshot.</em></p>
+
+![IAM - the five project roles](screenshots/iam-roles-list.png)
+![IAM - glue-job-role policy with glue:BatchGetPartition](screenshots/iam-glue-role-batchgetpartition.png)
+![VPC endpoints - S3 gateway plus four interface endpoints](screenshots/vpc-endpoints.png)
+![Redshift Serverless workgroup - private, 8 to 16 RPU](screenshots/redshift-workgroup-private-config.png)
+
+### Orchestration configuration proof
+
+<p align="justify"><em>What actually starts and controls a run: the Lambda's S3 trigger, the Step Functions definition with its retry policy and the data quality gate decision, and the Glue job settings for the VPC-connected Silver to Gold job.</em></p>
+
+![Lambda - S3 trigger on bronze/](screenshots/lambda-s3-trigger.png)
+![Step Functions - Retry block and DataQualityGate](screenshots/stepfunctions-definition-retry-dq-gate.png)
+![Glue - silver_to_gold job details](screenshots/glue-job-silver-to-gold-details.png)
+
+### Warehouse and dbt proof
+
+<p align="justify"><em>Row counts and sizes for the live and mart tables in Redshift, all 27 dbt tests passing against the live warehouse, and the auto-generated dbt documentation lineage graph.</em></p>
+
+![Redshift - table row counts and sizes](screenshots/redshift-table-sizes.png)
+![dbt - 27 of 27 tests passing](screenshots/dbt-tests-passing.png)
+![dbt docs - lineage graph](screenshots/dbt-docs-lineage.png)
 
 ### Dashboard
 
