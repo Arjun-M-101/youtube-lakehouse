@@ -483,6 +483,9 @@ git diff --cached | grep -iE "AKIA[0-9A-Z]{16}|aws_secret_access_key|secret_stri
 screenshots/
 ├── AWS_Architecture_Diagram-Dark.png              # Complete AWS architecture diagram - dark mode
 ├── AWS_Architecture_Diagram-Default.png           # Complete AWS architecture diagram - light mode
+├── AWS_Architecture_Diagram-Dark (old).png        # Complete AWS architecture diagram - dark mode (old)
+├── AWS_Architecture_Diagram-Default (old).png     # Complete AWS architecture diagram - light mode (old)
+├── AWS_Event-Driven_Batch_Pipeline_Flowchart      # Complete AWS Batch Pipeline Flowchart
 ├── stepfunctions-graph-succeeded.png              # graph view of a full green run - the single most important shot
 ├── stepfunctions-execution-history.png            # shows the DataQualityGate branch decision
 ├── stepfunctions-pipeline-failed-dq-gate.png      # optional - the IN failure, kept as proof of Production Problem #7
