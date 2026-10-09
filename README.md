@@ -93,7 +93,7 @@ youtube-lakehouse/
 - Terraform ≥ 1.5
 - Python 3.11+ (matches Glue 5.1's Python runtime)
 - A YouTube Data API v3 key ([console.cloud.google.com](https://console.cloud.google.com) → enable "YouTube Data API v3" → create credentials)
-- A QuickSight account (Standard, free trial is fine) and your QuickSight user ARN
+- A QuickSight account (Enterprise is recommended, but Standard is fine if only free trial is available) and your QuickSight user ARN
 - Git and a GitHub account (see the push section below if this is your first time)
 
 ## 🔀 First time: push this project to GitHub
@@ -368,7 +368,7 @@ aws secretsmanager delete-secret --secret-id youtube-lakehouse-redshift-credenti
 
 ```
 
-<p align="justify">Then re-subscribed to QuickSight manually through the console (Standard edition) for the account/region before re-running <code>terraform apply</code>. <strong>Takeaway:</strong> <code>terraform destroy</code> doesn't fully reclaim Secrets Manager names or QuickSight's account-level subscription - both need explicit manual cleanup before a clean redeploy on the same account.</p>
+<p align="justify">Then re-subscribed to QuickSight manually through the console (Enterprise edition) for the account/region before re-running <code>terraform apply</code>. <strong>Takeaway:</strong> <code>terraform destroy</code> doesn't fully reclaim Secrets Manager names or QuickSight's account-level subscription - both need explicit manual cleanup before a clean redeploy on the same account.</p>
 
 ### 12. Adding the Iceberg Gold write broke on a Glue Data Catalog API timeout - a missing VPC endpoint, not a code bug
 <p align="justify"><strong>Symptom:</strong> After adding the Iceberg <code>CREATE TABLE ... USING iceberg</code> write to <code>silver_to_gold.py</code>, the job got through the Parquet Gold write and the Redshift connection setup, then failed with <code>Unable to execute HTTP request: Connect to glue.&lt;region&gt;.amazonaws.com:443 ... Connect timed out (SDK Attempt Count: 3)</code> at the exact line calling <code>spark.sql("CREATE TABLE IF NOT EXISTS glue_catalog...")</code>. <strong>Diagnosis:</strong> <code>silver_to_gold</code> already runs with a <code>connections</code> block (for the Redshift JDBC connection), which routes the <em>entire</em> job's network traffic through the private VPC's ENIs instead of AWS's own backend. Every other Glue Catalog interaction this project had (the Silver crawler, <code>--enable-glue-datacatalog</code> on the Parquet path) is handled internally by the Glue service itself - the Iceberg write was the first time this job's own code called the Glue Data Catalog API (<code>GetTable</code>/<code>CreateTable</code>, via the Iceberg <code>GlueCatalog</code> client) from inside the VPC. <code>networking.tf</code> already had interface endpoints for Secrets Manager, Logs, and STS to avoid a NAT Gateway - but not for Glue itself, so that one call had no private path and no public one (no NAT), and timed out after three retries. <strong>Fix:</strong> Added one more interface VPC endpoint, following the exact same pattern as the existing three:</p>
