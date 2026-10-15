@@ -10,6 +10,12 @@
 
 ![AWS architecture diagram](screenshots/AWS_Architecture_Diagram-Dark.png)
 
+<p align="justify"><em>Architecture diagram extracted with the help of an AI LLM (ChatGPT) from my description of the deployed design, then checked by me against the Terraform code. If the picture and the code ever differ, the code in <code>terraform/</code> and <code>step_functions/</code> is the source of truth.</em></p>
+
+**Batch pipeline flowchart** (drawn by me in draw.io): steps 1 to 10, from the S3 upload to the dashboard; a bad file ends in an SNS alert and `PipelineFailed`.
+
+![Event-driven batch pipeline flowchart](screenshots/AWS_Event-Driven_Batch_Pipeline_Flowchart.png)
+
 <p align="justify">A daily <strong>EventBridge Scheduler</strong> run also fires the same state machine with an empty <code>triggeredKey</code>, so Bronze → Silver reprocesses the full Bronze prefix as a backstop even if no new file lands that day.</p>
 
 ## ✅ Every AWS service this project actually uses
@@ -82,7 +88,8 @@ youtube-lakehouse/
 ├── screenshots/                    # Dashboard + pipeline proof (see below)
 ├── .github/workflows/              # CI: pytest + terraform fmt/validate + dbt parse
 ├── requirements.txt / requirements-dbt.txt
-└── Makefile
+├── Makefile
+└── LICENSE                         # MIT
 
 ```
 
@@ -90,10 +97,10 @@ youtube-lakehouse/
 
 - AWS account with billing alert configured (this project is designed to run for a few dollars and be torn down - see [Teardown](#-teardown--cost-control))
 - AWS CLI v2, configured with credentials that can create IAM/S3/Glue/Redshift/QuickSight/Step Functions resources
-- Terraform ≥ 1.5
+- Terraform ≥ 1.7 (`versions.tf` requires `>= 1.7.0`; CI uses 1.7.5)
 - Python 3.11+ (matches Glue 5.1's Python runtime)
 - A YouTube Data API v3 key ([console.cloud.google.com](https://console.cloud.google.com) → enable "YouTube Data API v3" → create credentials)
-- A QuickSight account (Enterprise is recommended, but Standard is fine if only free trial is available) and your QuickSight user ARN
+- A QuickSight account in **Enterprise** edition (required: the stack creates a QuickSight VPC connection to the private Redshift workgroup, and VPC connections need Enterprise) and your QuickSight user ARN
 - Git and a GitHub account (see the push section below if this is your first time)
 
 ## 🔀 First time: push this project to GitHub
@@ -420,6 +427,27 @@ resource "aws_vpc_endpoint" "glue" {
 
 <p align="justify"><strong>A guarded toggle script over SSM port-forwarding for local dbt access.</strong> Once <code>publicly_accessible = false</code> was locked in as the permanent QuickSight-safe setting (Problem #5), dbt needed some way to reach a private workgroup from outside the VPC. SSM port-forwarding would let the workgroup stay private all the time - more setup, but it kills the open/close cycle entirely. For a portfolio project that isn't redeployed often, <code>scripts/run_dbt_step.sh</code> (open → run dbt → close, in one guarded pass) was the simpler trade: less infrastructure, at the cost of a brief public window during each dbt run.</p>
 
+## 📚 References, Licences and AI Use
+
+<p align="justify"><strong>Where the design comes from.</strong> The design follows published patterns rather than inventing new ones: the Medallion (Bronze/Silver/Gold) layering and the lakehouse idea, S3 event notifications to start the pipeline, Step Functions retries and error handling with the Glue <code>.sync</code> integration, a staging table plus <code>MERGE</code> for safe Redshift loads, Kimball's slowly changing dimensions for the incremental discussion, Apache Iceberg on Glue for the table-format copy, dbt data tests, and VPC endpoints instead of a NAT Gateway.</p>
+
+- [Databricks: What is Medallion Architecture?](https://www.databricks.com/glossary/medallion-architecture) · [Armbrust et al., Lakehouse (CIDR 2021)](https://www.cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf)
+- [Amazon S3 event notifications](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html) · [AWS Step Functions error handling](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-error-handling.html) · [Start a Glue job with Step Functions](https://docs.aws.amazon.com/step-functions/latest/dg/connect-glue.html)
+- [AWS Glue job parameters](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-programming-etl-glue-arguments.html) · [Glue crawlers](https://docs.aws.amazon.com/glue/latest/dg/add-crawler.html) · [Iceberg in AWS Glue](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-programming-etl-format-iceberg.html) · [Athena and Iceberg](https://docs.aws.amazon.com/athena/latest/ug/querying-iceberg.html)
+- [Redshift MERGE](https://docs.aws.amazon.com/redshift/latest/dg/r_MERGE.html) · [Merge by replacing existing rows (staging table)](https://docs.aws.amazon.com/redshift/latest/dg/merge-replacing-existing-rows.html) · [Kimball: Type 2 SCD](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/type-2/)
+- [QuickSight VPC connections (Enterprise)](https://docs.aws.amazon.com/quicksight/latest/user/working-with-aws-vpc.html) · [Interface VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/create-interface-endpoint.html) · [S3 gateway endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html)
+- [dbt data tests](https://docs.getdbt.com/docs/build/data-tests) · [dbt-utils](https://github.com/dbt-labs/dbt-utils) · [IAM security best practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html)
+
+<p align="justify">The full list (44 references, each link checked on 15 October 2026), with the section each one supports, is in the project's implementation guide.</p>
+
+**Data and assets.**
+- Dataset: [Kaggle "Trending YouTube Video Statistics" (datasnaek)](https://www.kaggle.com/datasets/datasnaek/youtube-new), licence [CC0 1.0 (public domain)](https://creativecommons.org/publicdomain/zero/1.0/). No company, client or personal data is used.
+- Category names: [YouTube Data API v3](https://developers.google.com/youtube/v3/docs/videoCategories/list), used under the [YouTube API Services Terms of Service](https://developers.google.com/youtube/terms/api-services-terms-of-service) with my own key (never in the code).
+- Service icons in the architecture diagram: [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/), which AWS allows customers to use in architecture diagrams.
+- Screenshots: taken by me from my own AWS account, with account IDs, e-mail addresses and ARNs covered.
+
+<p align="justify"><strong>AI use.</strong> AI assistants helped with this project: ChatGPT for local setup help and the architecture diagram, Microsoft Copilot for a deployment walkthrough, Claude for code, the deployment guide, reviews and draft documentation, and Google Gemini for troubleshooting. I deployed and ran every part in my own AWS account, hit and fixed the failures listed above, drew the flowchart myself, and checked the AI output against the code, the AWS documentation and the real error messages.</p>
+
 ## 🔒 Sensitive Info & How I Push This Safely
 
 <p align="justify">This project touches real AWS account IDs, a Redshift admin password, a YouTube API key, and Terraform state that contains resource ARNs. None of that belongs in git history. Here's exactly how it's kept out.</p>
@@ -481,11 +509,11 @@ git diff --cached | grep -iE "AKIA[0-9A-Z]{16}|aws_secret_access_key|secret_stri
 
 ```
 screenshots/
-├── AWS_Architecture_Diagram-Dark.png              # Complete AWS architecture diagram - dark mode
-├── AWS_Architecture_Diagram-Default.png           # Complete AWS architecture diagram - light mode
+├── AWS_Architecture_Diagram-Dark.png              # Complete AWS architecture diagram - dark mode (AI-assisted, checked against Terraform)
+├── AWS_Architecture_Diagram-Default.png           # Complete AWS architecture diagram - light mode (AI-assisted, checked against Terraform)
 ├── AWS_Architecture_Diagram-Dark (old).png        # Complete AWS architecture diagram - dark mode (old)
 ├── AWS_Architecture_Diagram-Default (old).png     # Complete AWS architecture diagram - light mode (old)
-├── AWS_Event-Driven_Batch_Pipeline_Flowchart      # Complete AWS Batch Pipeline Flowchart
+├── AWS_Event-Driven_Batch_Pipeline_Flowchart.png  # Batch pipeline flowchart, steps 1 to 10 (drawn in draw.io)
 ├── stepfunctions-graph-succeeded.png              # graph view of a full green run - the single most important shot
 ├── stepfunctions-execution-history.png            # shows the DataQualityGate branch decision
 ├── stepfunctions-pipeline-failed-dq-gate.png      # optional - the IN failure, kept as proof of Production Problem #7

@@ -14,6 +14,7 @@ The project keeps the same learning narrative as the open-source batch version b
 | Orchestration | Step Functions |
 | Event trigger | Lambda |
 | Backstop trigger | EventBridge Scheduler |
+| Gold table-format copy | Apache Iceberg on S3, registered in the Glue Data Catalog (Athena time travel) |
 | Warehouse | Redshift Serverless |
 | Ad-hoc detail | Athena |
 | Semantic SQL layer | dbt on Redshift |
@@ -44,7 +45,7 @@ The Bronze->Silver Glue job is not placed in the private VPC because it intentio
 
 - Invalid rows -> quarantine + DQ report.
 - Duplicate rows -> quarantine with `DUPLICATE_ROW` + DQ report.
-- DQ pass rate below threshold -> SNS alert + pipeline failure.
+- DQ validity rate below threshold -> SNS alert + pipeline failure.
 - Glue/crawler/runtime error -> Step Functions retry, then SNS alert + pipeline failure.
 - YouTube API failure -> use the existing S3 category reference and continue, so a temporary external API outage does not destroy an otherwise valid batch.
 

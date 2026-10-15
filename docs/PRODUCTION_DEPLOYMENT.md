@@ -185,11 +185,12 @@ Important fields include:
 - `rejected_validation_rows`
 - `duplicate_rows`
 - `pass_rate`
+- `validity_rate`
 - `threshold`
 - `pass`
 - `reasons`
 
-The default threshold is 0.95 and can be changed with `min_dq_pass_rate`.
+The gate compares `validity_rate = (clean rows + duplicate rows) / total rows` with the threshold. Duplicates are still quarantined, but they do not count as corrupt rows (see Production Problem #7 in the README). The default threshold is 0.95 and can be changed with `min_dq_pass_rate`.
 
 ## 14. Verify Redshift
 
