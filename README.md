@@ -1,5 +1,7 @@
 # 📊 YouTube Lakehouse - AWS Batch Data Engineering Pipeline
 
+> **License:** © 2026 Arjun M. All rights reserved. Published for viewing and evaluation only, see [LICENSE](LICENSE).
+
 ## 🚀 Overview
 
 <p align="justify">This is the AWS-native rebuild of my earlier local YouTube data engineering project (Airflow + Spark + Postgres + Streamlit - see <a href="https://github.com/Arjun-M-101/Youtube_DE_Project">that repo</a> for the local version). Where the local version proved the Medallion Architecture on a single machine, this version proves the same design as real managed cloud infrastructure: event-driven ingestion, a serverless orchestrator, distributed Spark ETL on AWS Glue, an explicit data-quality gate, a private serverless warehouse, and a BI layer - all defined as code and torn down when not in use.</p>
