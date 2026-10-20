@@ -91,7 +91,7 @@ youtube-lakehouse/
 ├── .github/workflows/              # CI: pytest + terraform fmt/validate + dbt parse
 ├── requirements.txt / requirements-dbt.txt
 ├── Makefile
-└── LICENSE                         # MIT
+└── LICENSE                         # All rights reserved (view and evaluate only)
 
 ```
 
@@ -449,6 +449,16 @@ resource "aws_vpc_endpoint" "glue" {
 - Screenshots: taken by me from my own AWS account, with account IDs, e-mail addresses and ARNs covered.
 
 <p align="justify"><strong>AI use.</strong> AI assistants helped with this project: ChatGPT for local setup help and the architecture diagram, Microsoft Copilot for a deployment walkthrough, Claude for code, the deployment guide, reviews and draft documentation, and Google Gemini for troubleshooting. I deployed and ran every part in my own AWS account, hit and fixed the failures listed above, drew the flowchart myself, and checked the AI output against the code, the AWS documentation and the real error messages.</p>
+
+## License and usage
+
+© 2026 Arjun M. All rights reserved.
+
+This repository is published so recruiters, hiring managers and engineers can read and evaluate my work. You may view the code, and clone and run it privately to evaluate it. You may not copy, modify, redistribute or reuse it, in whole or in part, in any other project, product, service or training dataset without my written permission. See [LICENSE](LICENSE). Third-party datasets, libraries and icons keep their own licenses.
+
+Permission requests: arjunmpec101@gmail.com
+
+   Commits made before 20 October 2026 were published under the MIT License; that grant applies only to copies obtained at that time.
 
 ## 🔒 Sensitive Info & How I Push This Safely
 
